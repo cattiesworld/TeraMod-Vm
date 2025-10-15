@@ -17,9 +17,7 @@ const MonitorRecord = Record({
     y: null,
     width: 0,
     height: 0,
-    visible: true,
-    variableId: null,
-    variableType: null
+    visible: true
 });
 
 module.exports = MonitorRecord;

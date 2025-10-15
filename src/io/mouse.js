@@ -1,5 +1,4 @@
 const MathUtil = require('../util/math-util');
-const { translateScreenPos } = require('../util/pos-math');
 
 const roundToThreeDecimals = number => Math.round(number * 1000) / 1000;
 
@@ -9,38 +8,15 @@ class Mouse {
         this._clientY = 0;
         this._scratchX = 0;
         this._scratchY = 0;
-
         this._buttons = new Set();
-        this._isDown = false;
-        
         this.usesRightClickDown = false;
-
-        // pm: keep track of clicks
-        this._isClicked = false;
-        this._clickOnStep = -1;
-
+        this._isDown = false;
         /**
          * Reference to the owning Runtime.
          * Can be used, for example, to activate hats.
          * @type{!Runtime}
          */
         this.runtime = runtime;
-        this.cameraBound = null;
-
-        // after processing all blocks, we can check if this step is after the one we clicked on
-        this.runtime.on("RUNTIME_STEP_END", () => {
-            if (this.runtime.frameLoop._stepCounter > this._clickOnStep) {
-                this._isClicked = false;
-            }
-        });
-    }
-
-    bindToCamera(screen) {
-        this.cameraBound = screen;
-    }
-
-    removeCameraBinding() {
-        this.cameraBound = null;
     }
 
     /**
@@ -53,15 +29,11 @@ class Mouse {
         // They were separated into two opcodes for labeling,
         // but should act the same way.
         // Intentionally not checking isStage to make it work when sharing blocks.
-        this.runtime.startHats('event_whenthisspriteclicked', null, target);
-        this.runtime.startHats('event_whenstageclicked', null, target);
-        if (target.isStage) {
-            this.runtime.startHats('pmEventsExpansion_whenSpriteClicked', { SPRITE: '_stage_' });
-            return;
-        }
-        if (target.sprite) {
-            this.runtime.startHats('pmEventsExpansion_whenSpriteClicked', { SPRITE: target.sprite.name });
-        }
+        // @todo the blocks should be converted from one to another when shared
+        this.runtime.startHats('event_whenthisspriteclicked',
+            null, target);
+        this.runtime.startHats('event_whenstageclicked',
+            null, target);
     }
 
     /**
@@ -76,7 +48,7 @@ class Mouse {
             const drawableID = this.runtime.renderer.pick(x, y);
             for (let i = 0; i < this.runtime.targets.length; i++) {
                 const target = this.runtime.targets[i];
-                if (target.hasOwnProperty('drawableID') &&
+                if (Object.prototype.hasOwnProperty.call(target, 'drawableID') &&
                     target.drawableID === drawableID) {
                     return target;
                 }
@@ -118,10 +90,6 @@ class Mouse {
 
             const previousDownState = this._isDown;
             this._isDown = data.isDown;
-            if (data.isDown) {
-                this._isClicked = true;
-                this._clickOnStep = this.runtime.frameLoop._stepCounter;
-            }
 
             // Do not trigger if down state has not changed
             if (previousDownState === this._isDown) return;
@@ -168,14 +136,10 @@ class Mouse {
      * @return {number} Clamped and integer rounded X position of the mouse cursor.
      */
     getScratchX () {
-        const mouseX = this.cameraBound
-            ? translateScreenPos(this.runtime, this.cameraBound, this._scratchX, this._scratchY)[0]
-            // ? (this._scratchX * cameraState.scale) - cameraState.pos[0]
-            : this._scratchX;
         if (this.runtime.runtimeOptions.miscLimits) {
-            return Math.round(mouseX);
+            return Math.round(this._scratchX);
         }
-        return roundToThreeDecimals(mouseX);
+        return roundToThreeDecimals(this._scratchX);
     }
 
     /**
@@ -183,14 +147,10 @@ class Mouse {
      * @return {number} Clamped and integer rounded Y position of the mouse cursor.
      */
     getScratchY () {
-        const mouseY = this.cameraBound
-            ? translateScreenPos(this.runtime, this.cameraBound, this._scratchX, this._scratchY)[1]
-            // ? (this._scratchY * cameraState.scale) - cameraState.pos[1]
-            : this._scratchY;
         if (this.runtime.runtimeOptions.miscLimits) {
-            return Math.round(mouseY);
+            return Math.round(this._scratchY);
         }
-        return roundToThreeDecimals(mouseY);
+        return roundToThreeDecimals(this._scratchY);
     }
 
     /**
@@ -199,14 +159,6 @@ class Mouse {
      */
     getIsDown () {
         return this._isDown;
-    }
-
-    /**
-     * pm: Get if the mouse was pressed down on this tick.
-     * @return {boolean} Is the mouse clicked?
-     */
-    getIsClicked () {
-        return this._isClicked;
     }
 
     /**

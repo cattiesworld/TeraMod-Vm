@@ -1,5 +1,4 @@
 const Cast = require('../util/cast');
-const SandboxRunner = require('../util/sandboxed-javascript-runner.js');
 
 class Scratch3ControlBlocks {
     constructor (runtime) {
@@ -14,12 +13,6 @@ class Scratch3ControlBlocks {
          * @type {number}
          */
         this._counter = 0; // used by compiler
-
-        /**
-         * The "error" block value.
-         * @type {string}
-         */
-        this._error = ''; // used by compiler
 
         this.runtime.on('RUNTIME_DISPOSED', this.clearCounter.bind(this));
     }
@@ -36,63 +29,17 @@ class Scratch3ControlBlocks {
             control_for_each: this.forEach,
             control_forever: this.forever,
             control_wait: this.wait,
-            control_repeatForSeconds: this.repeatForSeconds,
-            control_waittick: this.waitTick,
-            control_waitsecondsoruntil: this.waitOrUntil,
             control_wait_until: this.waitUntil,
             control_if: this.if,
             control_if_else: this.ifElse,
             control_stop: this.stop,
-            control_stop_sprite: this.stopSprite,
             control_create_clone_of: this.createClone,
             control_delete_this_clone: this.deleteClone,
-            control_delete_clones_of: this.deleteClonesOf,
             control_get_counter: this.getCounter,
             control_incr_counter: this.incrCounter,
-            control_decr_counter: this.decrCounter,
-            control_set_counter: this.setCounter,
             control_clear_counter: this.clearCounter,
-            control_all_at_once: this.allAtOnce,
-            control_backToGreenFlag: this.backToGreenFlag,
-            control_exitLoop: this.exitLoop,
-            control_continueLoop: this.continueLoop,
-            control_if_return_else_return: this.if_return_else_return,
-            control_javascript_command: this.runJavascript
+            control_all_at_once: this.allAtOnce
         };
-    }
-
-    getMonitored () {
-        return {
-            control_get_counter: {
-                getId: () => 'get_counter'
-            }
-        };
-    }
-
-    backToGreenFlag(_, util) {
-        const thisThread = util.thread.topBlock;
-        this.runtime.emit("PROJECT_START_BEFORE_RESET");
-        this.runtime.threads
-            .filter(thread => thread.topBlock !== thisThread)
-            .forEach(thread => thread.stopThisScript());
-        // green flag behaviour
-        this.runtime.emit("PROJECT_START");
-        this.runtime.updateCurrentMSecs();
-        this.runtime.ioDevices.clock.resetProjectTimer();
-        this.runtime.targets.forEach(target => target.clearEdgeActivatedValues());
-        for (let i = this.runtime.targets.length - 1; i >= 0; i--) {
-            const thisTarget = this.runtime.targets[i];
-            thisTarget.onGreenFlag();
-            if (!thisTarget.isOriginal) {
-                this.runtime.disposeTarget(thisTarget);
-                this.runtime.stopForTarget(thisTarget);
-            }
-        }
-        this.runtime.startHats("event_whenflagclicked");
-    }
-
-    if_return_else_return (args) {
-        return Cast.toBoolean(args.boolean) ? args.TEXT1 : args.TEXT2;
     }
 
     getHats () {
@@ -101,15 +48,6 @@ class Scratch3ControlBlocks {
                 restartExistingThreads: false
             }
         };
-    }
-
-    runJavascript(args) {
-        return new Promise((resolve) => {
-            const js = Cast.toString(args.JS);
-            SandboxRunner.execute(js).then(result => {
-                resolve(result.value);
-            });
-        });
     }
 
     repeat (args, util) {
@@ -182,41 +120,6 @@ class Scratch3ControlBlocks {
             util.yield();
         }
     }
-    
-    repeatForSeconds (args, util) {
-        if (util.stackTimerNeedsInit()) {
-            const duration = Math.max(0, 1000 * Cast.toNumber(args.TIMES));
-
-            util.startStackTimer(duration);
-            this.runtime.requestRedraw();
-            util.startBranch(1, true);
-            util.yield();
-        } else if (!util.stackTimerFinished()) {
-            util.startBranch(1, true);
-            util.yield();
-        }
-    }
-    
-    waitTick (_, util) {
-        util.yieldTick();
-    }
-
-    waitOrUntil (args, util) {
-        const condition = Cast.toBoolean(args.CONDITION);
-        if (!condition) {
-            if (util.stackTimerNeedsInit()) {
-                const duration = Math.max(0, 1000 * Cast.toNumber(args.DURATION));
-
-                util.startStackTimer(duration);
-                this.runtime.requestRedraw();
-                util.yield();
-                return;
-            }
-            if (!util.stackTimerFinished()) {
-                util.yield();
-            }
-        }
-    }
 
     if (args, util) {
         const condition = Cast.toBoolean(args.CONDITION);
@@ -244,21 +147,6 @@ class Scratch3ControlBlocks {
         } else if (option === 'this script') {
             util.stopThisScript();
         }
-    }
-
-    stopSprite (args, util) {
-        const option = args.STOP_OPTION;
-        // Set target
-        let target;
-        if (option === '_myself_') {
-            target = util.target;
-        } else if (option === '_stage_') {
-            target = this.runtime.getTargetForStage();
-        } else {
-            target = this.runtime.getSpriteTargetByName(option);
-        }
-        if (!target) return;
-        this.runtime.stopForTarget(target);
     }
 
     createClone (args, util) {
@@ -292,37 +180,8 @@ class Scratch3ControlBlocks {
         this.runtime.stopForTarget(util.target);
     }
 
-    deleteClonesOf (args, util) {
-        const cloneOption = Cast.toString(args.CLONE_OPTION);
-        // Set clone target
-        let cloneTarget;
-        if (cloneOption === '_myself_') {
-            cloneTarget = util.target;
-        } else {
-            cloneTarget = this.runtime.getSpriteTargetByName(cloneOption);
-        }
-
-        // If clone target is not found, return
-        if (!cloneTarget) return;
-        const sprite = cloneTarget.sprite;
-        if (!sprite) return;
-        if (!sprite.clones) return;
-        const cloneList = [].concat(sprite.clones);
-        cloneList.forEach(clone => {
-            if (clone.isOriginal) return;
-            if (clone.isStage) return;
-            this.runtime.disposeTarget(clone);
-            this.runtime.stopForTarget(clone);
-        })
-    }
-
     getCounter () {
         return this._counter;
-    }
-
-    setCounter (args) {
-        const num = Cast.toNumber(args.VALUE);
-        this._counter = num;
     }
 
     clearCounter () {
@@ -332,63 +191,15 @@ class Scratch3ControlBlocks {
     incrCounter () {
         this._counter++;
     }
-    
-    decrCounter () {
-        this._counter--;
-    }
 
-    allAtOnce (util) {
-        util.thread.peekStackFrame().warpMode = false;
+    allAtOnce (args, util) {
+        // Since the "all at once" block is implemented for compatiblity with
+        // Scratch 2.0 projects, it behaves the same way it did in 2.0, which
+        // is to simply run the contained script (like "if 1 = 1").
+        // (In early versions of Scratch 2.0, it would work the same way as
+        // "run without screen refresh" custom blocks do now, but this was
+        // removed before the release of 2.0.)
         util.startBranch(1, false);
-        util.thread.peekStackFrame().warpMode = true;
-    }
-
-    // used by compiler
-    exitLoop(_, util) {
-        this._editOuterLoop('escape', util);
-    }
-    continueLoop(_, util) {
-        this._editOuterLoop('continue', util);
-    }
-    _getLoopBlock(thread) {
-        // climp up stack to get outer loop
-        const stackFrames = thread.stackFrames, frameCount = stackFrames.length;
-        let loopBlock = null, stackIndex = -1;
-        for (let i = frameCount - 1; i >= 0; i--) {
-            if (i < 0) break;
-            if (!stackFrames[i].isLoop) continue;
-            loopBlock = stackFrames[i].op.id;
-            stackIndex = i;
-            break;
-        }
-        if (!loopBlock) return null;
-        return {
-            block: loopBlock,
-            index: stackIndex
-        };
-    }
-    _editOuterLoop(type, util) {
-        const thread = util.thread;
-        const wasCompiled = thread.isCompiled;
-        thread.isCompiled = false; // Failsafe
-
-        const frameData = this._getLoopBlock(thread);
-        if (!frameData) {
-            throw `All "${type} loop" blocks must be inside of a looping block.`;
-            return;
-        }
-
-        const block = frameData.block;
-        const afterLoop = thread.blockContainer.getBlock(block).next;
-        if (type === 'escape') {
-            while(thread.stack.at(-1) !== block) thread.popStack();
-            thread.popStack();
-            if (afterLoop) thread.pushStack(afterLoop);
-        } else {
-            while (thread.stack[0] && thread.stack.at(-1) !== block) thread.popStack();
-            thread.status = thread.constructor.STATUS_YIELD;
-        }
-        thread.isCompiled = wasCompiled;
     }
 }
 

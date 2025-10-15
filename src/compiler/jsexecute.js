@@ -35,21 +35,6 @@ const isStuck = () => {
 };`;
 
 /**
- * Alternative for nullish Coalescing
- * @param {string} name The variable to get
- * @returns {any} The value of the temp var or an empty string if its nullish
- */
-runtimeFunctions.nullish = `const nullish = (check, alt) => {
-    if (!check) {
-        if (val === undefined) return alt
-        if (val === null) return alt
-        return check
-    } else {
-        return check
-    }
-}`;
-
-/**
  * Start hats by opcode.
  * @param {string} requestedHat The opcode of the hat to start.
  * @param {*} optMatchFields Fields to match.
@@ -103,32 +88,6 @@ runtimeFunctions.waitThreads = `const waitThreads = function*(threads) {
  * @param {Promise} promise The promise to wait for.
  * @returns {*} the value that the promise resolves to, otherwise undefined if the promise rejects
  */
-runtimeFunctions.waitPromise = `
-const waitPromise = function*(promise) {
-    const thread = globalState.thread;
-    let returnValue;
-    let errorReturn;
-
-    promise
-        .then(value => {
-            returnValue = value;
-            thread.status = 0; // STATUS_RUNNING
-        })
-        .catch(error => {
-            errorReturn = error;
-            // i realized, i dont actually know what would happen if we never do this but throw and exit anyways
-            thread.status = 0; // STATUS_RUNNING
-        });
-
-    // enter STATUS_PROMISE_WAIT and yield
-    // this will stop script execution until the promise handlers reset the thread status
-    thread.status = 1; // STATUS_PROMISE_WAIT
-    yield;
-
-    // throw the promise error if ee got one
-    if (errorReturn) throw errorReturn
-    return returnValue;
-}`;
 
 /**
  * isPromise: Determine if a value is Promise-like
@@ -146,17 +105,40 @@ const waitPromise = function*(promise) {
  * @returns {*} the value returned by the block, if any.
  */
 runtimeFunctions.executeInCompatibilityLayer = `let hasResumedFromPromise = false;
+const waitPromise = function*(promise) {
+    const thread = globalState.thread;
+    let returnValue;
 
+    // enter STATUS_PROMISE_WAIT and yield
+    // this will stop script execution until the promise handlers reset the thread status
+    // because promise handlers might execute immediately, configure thread.status here
+    thread.status = 1; // STATUS_PROMISE_WAIT
+
+    promise
+        .then(value => {
+            returnValue = value;
+            thread.status = 0; // STATUS_RUNNING
+        }, error => {
+            globalState.log.warn('Promise rejected in compiled script:', error);
+            returnValue = '' + error;
+            thread.status = 0; // STATUS_RUNNING
+        });
+
+    yield;
+
+    return returnValue;
+};
 const isPromise = value => (
     // see engine/execute.js
     value !== null &&
     typeof value === 'object' &&
     typeof value.then === 'function'
 );
-const executeInCompatibilityLayer = function*(inputs, blockFunction, isWarp, useFlags, blockId, branchInfo, visualReport) {
+const executeInCompatibilityLayer = function*(inputs, blockFunction, isWarp, useFlags, blockId, branchInfo) {
     const thread = globalState.thread;
     const blockUtility = globalState.blockUtility;
     const stackFrame = branchInfo ? branchInfo.stackFrame : {};
+
     const finish = (returnValue) => {
         if (branchInfo) {
             if (typeof returnValue === 'undefined' && blockUtility._startedBranch) {
@@ -169,13 +151,9 @@ const executeInCompatibilityLayer = function*(inputs, blockFunction, isWarp, use
         return returnValue;
     };
 
-    // reset the stackframe
-    // we only ever use one stackframe at a time, so this shouldn't cause issues
-    thread.stackFrames[thread.stackFrames.length - 1].reuse(isWarp);
-
     const executeBlock = () => {
-        blockUtility.init(thread, blockId, stackFrame, branchInfo);
-        return blockFunction(inputs, blockUtility, visualReport);
+        blockUtility.init(thread, blockId, stackFrame);
+        return blockFunction(inputs, blockUtility);
     };
 
     let returnValue = executeBlock();
@@ -217,6 +195,7 @@ const executeInCompatibilityLayer = function*(inputs, blockFunction, isWarp, use
             return finish('');
         }
     }
+
     return finish(returnValue);
 }`;
 
@@ -228,8 +207,7 @@ runtimeFunctions.createBranchInfo = `const createBranchInfo = (isLoop) => ({
     defaultIsLoop: isLoop,
     isLoop: false,
     branch: 0,
-    stackFrame: {},
-    onEnd: [],
+    stackFrame: {}
 });`;
 
 /**
@@ -523,16 +501,6 @@ runtimeFunctions.listContains = `const listContains = (list, item) => {
 }`;
 
 /**
- * pm: Returns whether a list contains a value, using Array.some
- * @param {import('../engine/variable')} list The list.
- * @param {*} item The value to search for.
- * @returns {boolean} True if the list contains the item
- */
-runtimeFunctions.listContainsFastest = `const listContainsFastest = (list, item) => {
-    return list.value.some(litem => compareEqual(litem, item));
-}`;
-
-/**
  * Find the 1-indexed index of an item in a list.
  * @param {import('../engine/variable')} list The list.
  * @param {*} item The item to search for
@@ -596,63 +564,24 @@ runtimeFunctions.tan = `const tan = (angle) => {
     return Math.round(Math.tan((Math.PI * angle) / 180) * 1e10) / 1e10;
 }`;
 
-runtimeFunctions.resolveImageURL = `const resolveImageURL = imgURL => 
-    typeof imgURL === 'object' && imgURL.type === 'canvas'
-        ? Promise.resolve(imgURL.canvas)
-        : new Promise(resolve => {
-            const image = new Image();
-            image.crossOrigin = "anonymous";
-            image.onload = resolve(image);
-            image.onerror = resolve; // ignore loading errors lol!
-            image.src = ''+imgURL;
-        })`;
-
-runtimeFunctions.parseJSONSafe = `const parseJSONSafe = json => {
-    try return JSON.parse(json)
-    catch return {}
+/**
+ * @param {function} callback The function to run
+ * @param {...unknown} args The arguments to pass to the function
+ * @returns {unknown} A generator that will yield once then call the function and return its value.
+ */
+runtimeFunctions.yieldThenCall = `const yieldThenCall = function* (callback, ...args) {
+    yield;
+    return callback(...args);
 }`;
 
-runtimeFunctions._resolveKeyPath = `const _resolveKeyPath = (obj, keyPath) => {
-    const path = keyPath.matchAll(/(\\.|^)(?<key>[^.[]+)|\\[(?<litkey>(\\\\\\]|\\\\|[^]])+)\\]/g);
-    let top = obj;
-    let pre;
-    let tok;
-    let key;
-    while (!(tok = path.next()).done) {
-        key = tok.value.groups.key ?? tok.value.groups.litKey.replaceAll('\\\\\\\\', '\\\\').replaceAll('\\\\]', ']');
-        pre = top;
-        top = top?.get?.(key) ?? top?.[key];
-        if (top === undefined) return [obj, keyPath];
-    }
-    return [pre, key];
-}`;
-
-runtimeFunctions.get = `const get = (obj, keyPath) => {
-    const [root, key] = _resolveKeyPath(obj, keyPath);
-    return typeof root === 'undefined' 
-        ? '' 
-        : root.get?.(key) ?? root[key];
-}`;
-
-runtimeFunctions.set = `const set = (obj, keyPath, val) => {
-    const [root, key] = _resolveKeyPath(obj, keyPath);
-    return typeof root === 'undefined' 
-        ? '' 
-        : root.set?.(key, val) ?? (root[key] = val);
-}`;
-
-runtimeFunctions.remove = `const remove = (obj, keyPath) => {
-    const [root, key] = _resolveKeyPath(obj, keyPath);
-    return typeof root === 'undefined' 
-        ? '' 
-        : root.delete?.(key) ?? root.remove?.(key) ?? (delete root[key]);
-}`;
-
-runtimeFunctions.includes = `const includes = (obj, keyPath) => {
-    const [root, key] = _resolveKeyPath(obj, keyPath);
-    return typeof root === 'undefined' 
-        ? '' 
-        : root.has?.(key) ?? (key in root);
+/**
+ * @param {function} callback The generator function to run
+ * @param {...unknown} args The arguments to pass to the generator function
+ * @returns {unknown} A generator that will yield once then delegate to the generator function and return its value.
+ */
+runtimeFunctions.yieldThenCallGenerator = `const yieldThenCallGenerator = function* (callback, ...args) {
+    yield;
+    return yield* callback(...args);
 }`;
 
 /**
@@ -679,12 +608,6 @@ const insertRuntime = source => {
             result += `${runtimeFunctions[functionName]};`;
         }
     }
-    if (result.includes('executeInCompatibilityLayer') && !result.includes('const waitPromise')) {
-        result = result.replace('let hasResumedFromPromise = false;', `let hasResumedFromPromise = false;\n${runtimeFunctions.waitPromise}`);
-    }
-    if (result.includes('_resolveKeyPath') && !result.includes('const _resolveKeyPath')) {
-        result = runtimeFunctions._resolveKeyPath + ';' + result;
-    }
     result += `return ${source}`;
     return result;
 };
@@ -700,7 +623,6 @@ const scopedEval = source => {
         return new Function('globalState', withRuntime)(globalState);
     } catch (e) {
         globalState.log.error('was unable to compile script', withRuntime);
-        console.log(e);
         throw e;
     }
 };
@@ -709,7 +631,5 @@ execute.scopedEval = scopedEval;
 execute.runtimeFunctions = runtimeFunctions;
 execute.saveGlobalState = saveGlobalState;
 execute.restoreGlobalState = restoreGlobalState;
-// not actually used, this is an export for extensions
-execute.globalState = globalState;
 
 module.exports = execute;

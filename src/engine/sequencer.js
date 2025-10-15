@@ -82,13 +82,15 @@ class Sequencer {
         // Whether `stepThreads` has run through a full single tick.
         let ranFirstTick = false;
         const doneThreads = [];
+
+        // tw: If this happens, the runtime is in initialization, do not execute any thread.
+        if (this.runtime.currentStepTime === 0) return [];
         // Conditions for continuing to stepping threads:
         // 1. We must have threads in the list, and some must be active.
         // 2. Time elapsed must be less than WORK_TIME.
         // 3. Either turbo mode, or no redraw has been requested by a primitive.
         while (this.runtime.threads.length > 0 &&
                numActiveThreads > 0 &&
-               this.timer.timeElapsed() < WORK_TIME &&
                (this.runtime.turboMode || !this.runtime.redrawRequested)) {
             if (this.runtime.profiler !== null) {
                 if (stepThreadsInnerProfilerId === -1) {
@@ -108,12 +110,6 @@ class Sequencer {
                     activeThread.status === Thread.STATUS_DONE) {
                     // Finished with this thread.
                     stoppedThread = true;
-                    continue;
-                }
-                if (activeThread.status === Thread.STATUS_PAUSED) {
-                    if (activeThread.timer && !activeThread.timer._pausedTime) {
-                        activeThread.timer.pause();
-                    }
                     continue;
                 }
                 if (activeThread.status === Thread.STATUS_YIELD_TICK &&
@@ -170,6 +166,10 @@ class Sequencer {
                 }
                 this.runtime.threads.length = nextActiveThread;
             }
+
+            // tw: Detect timer here so the sequencer won't break when FPS is greater than 1000
+            // and performance.now() is not available.
+            if (this.timer.timeElapsed() >= WORK_TIME) break;
         }
 
         this.activeThread = null;
@@ -195,7 +195,6 @@ class Sequencer {
             // Did the null follow a hat block?
             if (thread.stack.length === 0) {
                 thread.status = Thread.STATUS_DONE;
-                this.runtime.emit('THREAD_FINISHED', thread);
                 return;
             }
         }
@@ -246,7 +245,7 @@ class Sequencer {
                 return;
             }
             // If no control flow has happened, switch to next block.
-            if (thread.peekStack() === currentBlockId) {
+            if (thread.peekStack() === currentBlockId && !thread.peekStackFrame().waitingReporter) {
                 thread.goToNextBlock();
             }
             // If no next block has been found at this point, look on the stack.
@@ -256,7 +255,6 @@ class Sequencer {
                 if (thread.stack.length === 0) {
                     // No more stack to run!
                     thread.status = Thread.STATUS_DONE;
-                    this.runtime.emit('THREAD_FINISHED', thread);
                     return;
                 }
 
@@ -282,7 +280,7 @@ class Sequencer {
                     // This level of the stack was waiting for a value.
                     // This means a reporter has just returned - so don't go
                     // to the next block for this level of the stack.
-                    return;
+                    continue;
                 }
                 // Get next block of existing block on the stack.
                 thread.goToNextBlock();
@@ -370,7 +368,6 @@ class Sequencer {
         thread.stackFrame = [];
         thread.requestScriptGlowInFrame = false;
         thread.status = Thread.STATUS_DONE;
-        this.runtime.emit('THREAD_FINISHED', thread);
         if (thread.isCompiled) {
             thread.procedures = null;
             thread.generator = null;

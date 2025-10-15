@@ -216,13 +216,6 @@ class Thread {
         this.procedures = null;
         this.executableHat = false;
         this.compatibilityStackFrame = null;
-
-        /**
-         * Thread vars: for allowing a compiled version of the 
-         * LilyMakesThings Thread Variables extension
-         * @type {Object}
-         */
-        this.variables = Object.create(null);
     }
 
     /**
@@ -259,16 +252,6 @@ class Thread {
      */
     static get STATUS_YIELD_TICK () {
         return 3; // used by compiler
-    }
-
-    /**
-     * Thread status for a paused thread.
-     * Thread is in this state when it has been told to pause and needs to pause 
-     * any new yields from the compiler
-     * @const
-     */
-    static get STATUS_PAUSED () {
-        return 5;
     }
 
     /**
@@ -334,8 +317,11 @@ class Thread {
         let blockID = this.peekStack();
         while (blockID !== null) {
             const block = this.target.blocks.getBlock(blockID);
+
             // Reporter form of procedures_call
-            if (this.peekStackFrame().waitingReporter) break;
+            if (this.peekStackFrame().waitingReporter) {
+                break;
+            }
 
             // Command form of procedures_call
             if (typeof block !== 'undefined' && block.opcode === 'procedures_call') {
@@ -346,6 +332,7 @@ class Thread {
                 this.goToNextBlock();
                 break;
             }
+
             this.popStack();
             blockID = this.peekStack();
         }
@@ -354,7 +341,6 @@ class Thread {
             // Clean up!
             this.requestScriptGlowInFrame = false;
             this.status = Thread.STATUS_DONE;
-            this.target.runtime.emit('THREAD_FINISHED', this);
         }
     }
 
@@ -400,24 +386,6 @@ class Thread {
             stackFrame.params = {};
         }
     }
-
-    /**
-     * pause this thread
-     */
-    pause () {
-        this.originalStatus = this.status;
-        this.status = Thread.STATUS_PAUSED;
-        if (this.timer) this.timer.pause();
-    }
-
-    /**
-     * unpause this thread
-     */
-    play () {
-        this.status = this.originalStatus;
-        if (this.timer) this.timer.play();
-    }
-
 
     /**
      * Add a parameter to the stack frame.
@@ -544,7 +512,7 @@ class Thread {
         for (const procedureCode of Object.keys(result.procedures)) {
             this.procedures[procedureCode] = result.procedures[procedureCode](this);
         }
-        
+
         this.generator = result.startingFunction(this)();
 
         this.executableHat = result.executableHat;
@@ -558,7 +526,7 @@ class Thread {
     }
 }
 
-// For extensions
+// for extensions
 Thread._StackFrame = _StackFrame;
 
 module.exports = Thread;

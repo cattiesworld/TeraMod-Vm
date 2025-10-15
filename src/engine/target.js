@@ -8,7 +8,6 @@ const {Map} = require('immutable');
 const log = require('../util/log');
 const StringUtil = require('../util/string-util');
 const VariableUtil = require('../util/variable-util');
-const ExtensionStorage = require('../util/deprecated-extension-storage.js');
 
 /**
  * @fileoverview
@@ -73,13 +72,10 @@ class Target extends EventEmitter {
         this._edgeActivatedHatValues = {};
 
         /**
-         * Part of a recreation of the TurboWarp extensionStorage
-         * API. The only real reason this is here is to make sure
-         * that extensions that only implement TurboWarp's store
-         * method don't break in PenguinMod.
-         * @type {Object<string, Object>}
+         * Maps extension ID to a JSON-serializable value.
+         * @type {Object.<string, object>}
          */
-        this.extensionStorage = ExtensionStorage();
+        this.extensionStorage = {};
     }
 
     /**
@@ -111,7 +107,7 @@ class Target extends EventEmitter {
     }
 
     hasEdgeActivatedValue (blockId) {
-        return this._edgeActivatedHatValues.hasOwnProperty(blockId);
+        return Object.prototype.hasOwnProperty.call(this._edgeActivatedHatValues, blockId);
     }
 
     /**
@@ -177,14 +173,14 @@ class Target extends EventEmitter {
      * @param {string} name Name of the variable.
      * @return {?Variable} Variable object.
      */
-    lookupBroadcastByInputValue(name) {
-        const variables = Object.values(this.variables);
-        return variables.find(varData => {
-            return (
-                varData.type === Variable.BROADCAST_MESSAGE_TYPE &&
-                varData.name.toLowerCase() === name.toLowerCase()
-            );
-        });
+    lookupBroadcastByInputValue (name) {
+        const vars = this.variables;
+        for (const propName in vars) {
+            if ((vars[propName].type === Variable.BROADCAST_MESSAGE_TYPE) &&
+                (vars[propName].name.toLowerCase() === name.toLowerCase())) {
+                return vars[propName];
+            }
+        }
     }
 
     /**
@@ -196,13 +192,13 @@ class Target extends EventEmitter {
      */
     lookupVariableById (id) {
         // If we have a local copy, return it.
-        if (this.variables.hasOwnProperty(id)) {
+        if (Object.prototype.hasOwnProperty.call(this.variables, id)) {
             return this.variables[id];
         }
         // If the stage has a global copy, return it.
         if (this.runtime && !this.isStage) {
             const stage = this.runtime.getTargetForStage();
-            if (stage && stage.variables.hasOwnProperty(id)) {
+            if (stage && Object.prototype.hasOwnProperty.call(stage.variables, id)) {
                 return stage.variables[id];
             }
         }
@@ -217,25 +213,30 @@ class Target extends EventEmitter {
      * @param {?bool} skipStage Optional flag to skip checking the stage
      * @return {?Variable} Variable object if found, or null if not.
      */
-    lookupVariableByNameAndType(name, type, skipStage) {
+    lookupVariableByNameAndType (name, type, skipStage) {
         if (typeof name !== 'string') return;
         if (typeof type !== 'string') type = Variable.SCALAR_TYPE;
         skipStage = skipStage || false;
 
-        // Search variables in the current target
-        const variables = Object.values(this.variables);
-        const foundInCurrent = variables.find(varData => varData.name === name && varData.type === type);
-        if (foundInCurrent) return foundInCurrent;
+        for (const varId in this.variables) {
+            const currVar = this.variables[varId];
+            if (currVar.name === name && currVar.type === type) {
+                return currVar;
+            }
+        }
 
-        // Search variables in the stage if applicable
         if (!skipStage && this.runtime && !this.isStage) {
             const stage = this.runtime.getTargetForStage();
             if (stage) {
-                const stageVariables = Object.values(stage.variables);
-                const foundInStage = stageVariables.find(varData => varData.name === name && varData.type === type);
-                if (foundInStage) return foundInStage;
+                for (const varId in stage.variables) {
+                    const currVar = stage.variables[varId];
+                    if (currVar.name === name && currVar.type === type) {
+                        return currVar;
+                    }
+                }
             }
         }
+
         return null;
     }
 
@@ -269,8 +270,8 @@ class Target extends EventEmitter {
      * Additional checks are made that the variable can be created as a cloud variable.
      */
     createVariable (id, name, type, isCloud) {
-        if (!this.variables.hasOwnProperty(id)) {
-            const newVariable = this.runtime.newVariableInstance(type, id, name, false);
+        if (!Object.prototype.hasOwnProperty.call(this.variables, id)) {
+            const newVariable = new Variable(id, name, type, false);
             if (isCloud && this.isStage && this.runtime.canAddCloudVariable()) {
                 newVariable.isCloud = true;
                 this.runtime.addCloudVariable();
@@ -293,7 +294,7 @@ class Target extends EventEmitter {
      * @param {boolean} minimized Whether the comment is minimized.
      */
     createComment (id, blockId, text, x, y, width, height, minimized) {
-        if (!this.comments.hasOwnProperty(id)) {
+        if (!Object.prototype.hasOwnProperty.call(this.comments, id)) {
             const newComment = new Comment(id, text, x, y,
                 width, height, minimized);
             if (blockId) {
@@ -316,7 +317,7 @@ class Target extends EventEmitter {
      * @param {string} newName New name for the variable.
      */
     renameVariable (id, newName) {
-        if (this.variables.hasOwnProperty(id)) {
+        if (Object.prototype.hasOwnProperty.call(this.variables, id)) {
             const variable = this.variables[id];
             if (variable.id === id) {
                 const oldName = variable.name;
@@ -367,7 +368,7 @@ class Target extends EventEmitter {
      * @param {string} id Id of variable to delete.
      */
     deleteVariable (id) {
-        if (this.variables.hasOwnProperty(id)) {
+        if (Object.prototype.hasOwnProperty.call(this.variables, id)) {
             // Get info about the variable before deleting it
             const deletedVariableName = this.variables[id].name;
             const deletedVariableWasCloud = this.variables[id].isCloud;
@@ -413,12 +414,12 @@ class Target extends EventEmitter {
      * the original variable was not found.
      */
     duplicateVariable (id, optKeepOriginalId) {
-        if (this.variables.hasOwnProperty(id)) {
+        if (Object.prototype.hasOwnProperty.call(this.variables, id)) {
             const originalVariable = this.variables[id];
-            const newVariable = this.runtime.newVariableInstance(
-                originalVariable.type,
+            const newVariable = new Variable(
                 optKeepOriginalId ? id : null, // conditionally keep original id or generate a new one
                 originalVariable.name,
+                originalVariable.type,
                 originalVariable.isCloud
             );
             if (newVariable.type === Variable.LIST_TYPE) {
@@ -600,7 +601,7 @@ class Target extends EventEmitter {
         if (existingLocalVar) {
             newVarId = existingLocalVar.id;
         } else {
-            const newVar = this.runtime.newVariableInstance(varType, null, varName);
+            const newVar = new Variable(null, varName, varType);
             newVarId = newVar.id;
             sprite.variables[newVarId] = newVar;
         }
@@ -700,7 +701,7 @@ class Target extends EventEmitter {
         const unreferencedLocalVarIds = [];
         if (Object.keys(this.variables).length > 0) {
             for (const localVarId in this.variables) {
-                if (!this.variables.hasOwnProperty(localVarId)) continue;
+                if (!Object.prototype.hasOwnProperty.call(this.variables, localVarId)) continue;
                 if (!allReferences[localVarId]) unreferencedLocalVarIds.push(localVarId);
             }
         }
@@ -725,7 +726,7 @@ class Target extends EventEmitter {
             if (this.lookupVariableById(varId)) {
                 // Found a variable with the id in either the target or the stage,
                 // figure out which one.
-                if (this.variables.hasOwnProperty(varId)) {
+                if (Object.prototype.hasOwnProperty.call(this.variables, varId)) {
                     // If the target has the variable, then check whether the stage
                     // has one with the same name and type. If it does, then rename
                     // this target specific variable so that there is a distinction.

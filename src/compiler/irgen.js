@@ -1,12 +1,8 @@
 const Cast = require('../util/cast');
 const StringUtil = require('../util/string-util');
 const BlockType = require('../extension-support/block-type');
-const Sequencer = require('../engine/sequencer');
-const BlockUtility = require('../engine/block-utility');
 const Variable = require('../engine/variable');
-const Color = require('../util/color');
 const log = require('../util/log');
-const Clone = require('../util/clone');
 const {IntermediateScript, IntermediateRepresentation} = require('./intermediate');
 const compatBlocks = require('./compat-blocks');
 
@@ -71,16 +67,12 @@ class ScriptTreeGenerator {
         this.runtime = this.target.runtime;
         /** @private */
         this.stage = this.runtime.getTargetForStage();
-        /** @private */
-        this.util = new BlockUtility(this.runtime.sequencer, this.thread);
 
         /**
          * This script's intermediate representation.
          */
         this.script = new IntermediateScript();
         this.script.warpTimer = this.target.runtime.compilerOptions.warpTimer;
-        this.script.isOptimized = this.target.runtime.runtimeOptions.dangerousOptimizations;
-        this.script.optimizationUtil = this.target.runtime.optimizationUtil;
 
         /**
          * Cache of variable ID to variable data object.
@@ -90,23 +82,12 @@ class ScriptTreeGenerator {
         this.variableCache = {};
 
         this.usesTimer = false;
-
-        this.debug = this.runtime.debug;
-    }
-
-    static addCompilerInfo(ir = {}, compilerInfo = {}) {
-        ir = {...ir} //clone
-        if (ir.compilerInfo) {
-            ir.compilerInfo = {...ir.compilerInfo, ...compilerInfo}
-        } else {
-            ir.compilerInfo = compilerInfo
-        }
-        return ir
     }
 
     setProcedureVariant (procedureVariant) {
         const procedureCode = parseProcedureCode(procedureVariant);
 
+        this.script.procedureVariant = procedureVariant;
         this.script.procedureCode = procedureCode;
         this.script.isProcedure = true;
         this.script.yields = false;
@@ -158,7 +139,7 @@ class ScriptTreeGenerator {
             log.warn(`IR: ${parentBlock.opcode}: missing input ${inputName}`, parentBlock);
             return {
                 kind: 'constant',
-                value: null
+                value: 0
             };
         }
         const inputId = input.block;
@@ -167,7 +148,7 @@ class ScriptTreeGenerator {
             log.warn(`IR: ${parentBlock.opcode}: could not find input ${inputName} with ID ${inputId}`);
             return {
                 kind: 'constant',
-                value: null
+                value: 0
             };
         }
 
@@ -181,29 +162,6 @@ class ScriptTreeGenerator {
      * @returns {Node} Compiled input node for this input.
      */
     descendInput (block) {
-        // check if we have extension ir for this opcode
-        const extensionId = String(block.opcode).split('_')[0];
-        const blockId = String(block.opcode).replace(extensionId + '_', '');
-        if (IRGenerator.hasExtensionIr(extensionId) && IRGenerator.getExtensionIr(extensionId)[blockId]) {
-            // this is an extension block that wants to be compiled
-            const irFunc = IRGenerator.getExtensionIr(extensionId)[blockId];
-            let irData = null;
-            // make sure irFunc isnt broken
-            try {
-                irData = irFunc(this, block);
-            } catch (err) {
-                log.warn(extensionId + '_' + blockId, 'failed to create IR data;', err);
-            }
-            if (irData) {
-                // check if it is this type, we dont want to descend a stack as an input
-                if (irData.kind === 'input') {
-                    // set proper kind
-                    irData.kind = extensionId + '.' + blockId;
-                    return irData;
-                }
-            }
-        }
-
         switch (block.opcode) {
         case 'colour_picker':
             return {
@@ -223,25 +181,6 @@ class ScriptTreeGenerator {
             return {
                 kind: 'constant',
                 value: block.fields.TEXT.value
-            };
-        case 'checkbox':
-            return {
-                kind: 'constant',
-                value: block.fields.CHECKBOX.value == "TRUE"
-            };
-        case 'polygon':
-            const points = [];
-            for (let point = 1; point <= block.mutation.points; point++) {
-                const xn = `x${point}`;
-                const yn = `y${point}`;
-                points.push({
-                    x: this.descendInputOfBlock(block, xn),
-                    y: this.descendInputOfBlock(block, yn)
-                });
-            };
-            return {
-                kind: 'math.polygon',
-                points
             };
 
         case 'argument_reporter_string_number': {
@@ -263,7 +202,7 @@ class ScriptTreeGenerator {
                 };
             }
             return {
-                kind: 'args.stringNumber',
+                kind: 'procedures.argument',
                 index: index
             };
         }
@@ -272,17 +211,19 @@ class ScriptTreeGenerator {
             const name = block.fields.VALUE.value;
             const index = this.script.arguments.lastIndexOf(name);
             if (index === -1) {
-                const nameCheck = name.toLowerCase();
-                const bool = nameCheck === 'is compiled?' || nameCheck === 'is penguinmod?' ||
-                    nameCheck === 'is penguinmod or turbowarp?';
-                // 'is turbowarp?' will return false since this is penguinmod, duh
+                if (name.toLowerCase() === 'is compiled?' || name.toLowerCase() === 'is turbowarp?') {
+                    return {
+                        kind: 'constant',
+                        value: true
+                    };
+                }
                 return {
                     kind: 'constant',
-                    value: bool
+                    value: 0
                 };
             }
             return {
-                kind: 'args.boolean',
+                kind: 'procedures.argument',
                 index: index
             };
         }
@@ -290,14 +231,6 @@ class ScriptTreeGenerator {
         case 'control_get_counter':
             return {
                 kind: 'counter.get'
-            };
-        case 'control_error':
-            return {
-                kind: 'control.error'
-            };
-        case 'control_is_clone':
-            return {
-                kind: 'control.isclone'
             };
 
         case 'data_variable':
@@ -322,30 +255,16 @@ class ScriptTreeGenerator {
                 list: this.descendVariable(block, 'LIST', LIST_TYPE),
                 item: this.descendInputOfBlock(block, 'ITEM')
             };
-            case 'data_itemnumoflist':
-                return {
-                    kind: 'list.indexOf',
-                    list: this.descendVariable(block, 'LIST', LIST_TYPE),
-                    item: this.descendInputOfBlock(block, 'ITEM')
-                };
-            case 'data_amountinlist':
-                return {
-                    kind: 'list.amountOf',
-                    list: this.descendVariable(block, 'LIST', LIST_TYPE),
-                    value: this.descendInputOfBlock(block, 'VALUE')
-                };
+        case 'data_itemnumoflist':
+            return {
+                kind: 'list.indexOf',
+                list: this.descendVariable(block, 'LIST', LIST_TYPE),
+                item: this.descendInputOfBlock(block, 'ITEM')
+            };
         case 'data_listcontents':
             return {
                 kind: 'list.contents',
                 list: this.descendVariable(block, 'LIST', LIST_TYPE)
-            };
-        case 'data_filterlistitem':
-            return {
-                kind: 'list.filteritem'
-            };
-        case 'data_filterlistindex':
-            return {
-                kind: 'list.filterindex'
             };
 
         case 'event_broadcast_menu': {
@@ -359,25 +278,6 @@ class ScriptTreeGenerator {
             };
         }
 
-        case 'pmEventsExpansion_broadcastFunction':
-            this.script.yields = true;
-            return {
-                kind: 'pmEventsExpansion.broadcastFunction',
-                broadcast: this.descendInputOfBlock(block, 'BROADCAST')
-            };
-        case 'pmEventsExpansion_broadcastFunctionArgs':
-            this.script.yields = true;
-            return {
-                kind: 'pmEventsExpansion.broadcastFunctionArgs',
-                broadcast: this.descendInputOfBlock(block, 'BROADCAST'),
-                args: this.descendInputOfBlock(block, 'ARGS')
-            };
-        
-        case 'control_inline_stack_output':
-            return {
-                kind: 'control.inlineStackOutput',
-                code: this.descendSubstack(block, 'SUBSTACK')
-            };
         case 'looks_backdropnumbername':
             if (block.fields.NUMBER_NAME.value === 'number') {
                 return {
@@ -400,10 +300,7 @@ class ScriptTreeGenerator {
             return {
                 kind: 'looks.size'
             };
-        case 'looks_tintColor':
-            return {
-                kind: 'looks.tintColor'
-            };
+
         case 'motion_direction':
             return {
                 kind: 'motion.direction'
@@ -441,29 +338,6 @@ class ScriptTreeGenerator {
                 left: this.descendInputOfBlock(block, 'NUM1'),
                 right: this.descendInputOfBlock(block, 'NUM2')
             };
-        case 'operator_power':
-            return {
-                kind: 'op.power',
-                left: this.descendInputOfBlock(block, 'NUM1'),
-                right: this.descendInputOfBlock(block, 'NUM2')
-            };
-        case 'operator_expandableMath': {
-            const menuOperators = block.mutation.menuvalues;
-            const inputs = Object.values(block.inputs);
-            const operations = [];
-            for (var i = 0; i < inputs.length; i++) {
-                const input = inputs[i];
-                if (input.block == null) delete block.inputs[input.name];
-                else operations.push([
-                  this.descendInputOfBlock(block, input.name),
-                  menuOperators[i]
-                ]);
-            }
-            return {
-                kind: 'op.expandmath',
-                operations
-            };
-        }
         case 'operator_equals':
             return {
                 kind: 'op.equals',
@@ -482,18 +356,6 @@ class ScriptTreeGenerator {
                 left: this.descendInputOfBlock(block, 'STRING1'),
                 right: this.descendInputOfBlock(block, 'STRING2')
             };
-        case "operators_expandablejoininputs":
-        case "operator_expandablejoininputs": {
-            const strings = [];
-            for (const input of Object.values(block.inputs)) {
-                if (input.block == null) delete block.inputs[input.name];
-                else strings.push(this.descendInputOfBlock(block, input.name));
-            }
-            return {
-                kind: "op.expandjoin",
-                strings
-            };
-        }
         case 'operator_length':
             return {
                 kind: 'op.length',
@@ -525,10 +387,6 @@ class ScriptTreeGenerator {
             };
             case 'ceiling': return {
                 kind: 'op.ceiling',
-                value
-            };
-            case 'sign': return {
-                kind: 'op.sign',
                 value
             };
             case 'sqrt': return {
@@ -567,10 +425,6 @@ class ScriptTreeGenerator {
                 kind: 'op.log',
                 value
             };
-            case 'log2': return {
-                kind: 'op.log2',
-                value
-            };
             case 'e ^': return {
                 kind: 'op.e^',
                 value
@@ -585,12 +439,6 @@ class ScriptTreeGenerator {
             };
             }
         }
-        case 'operator_advlog':
-            return {
-                kind: 'op.advlog',
-                left: this.descendInputOfBlock(block, 'NUM1'),
-                right: this.descendInputOfBlock(block, 'NUM2')
-            };
         case 'operator_mod':
             return {
                 kind: 'op.mod',
@@ -693,6 +541,9 @@ class ScriptTreeGenerator {
                 right: this.descendInputOfBlock(block, 'NUM2')
             };
 
+        case 'procedures_call':
+            return this.descendProcedure(block);
+
         case 'sensing_answer':
             return {
                 kind: 'sensing.answer'
@@ -733,12 +584,11 @@ class ScriptTreeGenerator {
                 return {
                     kind: 'sensing.second'
                 };
-            case 'timestamp':
+            case 'refreshtime':
                 return {
-                    kind: 'sensing.timestamp'
+                    kind: 'sensing.refreshTime'
                 };
             }
-
             return {
                 kind: 'constant',
                 value: 0
@@ -794,214 +644,32 @@ class ScriptTreeGenerator {
             return {
                 kind: 'sensing.username'
             };
-        case 'sensing_loggedin': 
-            return {
-                kind: 'sensing.loggedin'
-            };
-        case 'operator_trueBoolean':
-            return {
-                kind: 'op.true'
-            };
-        case 'operator_falseBoolean':
-            return {
-                kind: 'op.false'
-            };
-        case 'operator_randomBoolean':
-            return {
-                kind: 'op.randbool'
-            };
 
         case 'sound_sounds_menu':
+            // This menu is special compared to other menus -- it actually has an opcode function.
             return {
                 kind: 'constant',
                 value: block.fields.SOUND_MENU.value
             };
-
-        case 'lmsTempVars2_getRuntimeVariable':
-            return {
-                kind: 'tempVars.get',
-                var: this.descendInputOfBlock(block, 'VAR'),
-                runtime: true
-            };
-        case 'lmsTempVars2_getThreadVariable':
-            return {
-                kind: 'tempVars.get',
-                var: this.descendInputOfBlock(block, 'VAR'),
-                thread: true
-            };
-        case 'tempVars_getVariable':
-            return {
-                kind: 'tempVars.get',
-                var: this.descendInputOfBlock(block, 'name')
-            };
-        
-        case 'lmsTempVars2_runtimeVariableExists':
-            return {
-                kind: 'tempVars.exists',
-                var: this.descendInputOfBlock(block, 'VAR'),
-                runtime: true
-            };
-        case 'lmsTempVars2_threadVariableExists':
-            return {
-                kind: 'tempVars.exists',
-                var: this.descendInputOfBlock(block, 'VAR'),
-                thread: true
-            };
-        case 'tempVars_variableExists':
-            // This menu is special compared to other menus -- it actually has an opcode function.
-            return {
-                kind: 'tempVars.exists',
-                var: this.descendInputOfBlock(block, 'name')
-            };
-
-        case 'lmsTempVars2_listRuntimeVariables':
-            return {
-                kind: 'tempVars.all',
-                runtime: true
-            };
-        case 'lmsTempVars2_listThreadVariables':
-            return {
-                kind: 'tempVars.all',
-                thread: true
-            };
-        case 'tempVars_allVariables':
-            return {
-                kind: 'tempVars.all'
-            };
-
-        // used by the stacked version of this block to run as an input block 
-        // despite there being a stacked version
-        case 'procedures_call_return':
-        case 'procedures_call': {
-            // setting of yields will be handled later in the analysis phase
-    
-            const procedureCode = block.mutation.proccode;
-            if (procedureCode === 'tw:debugger;') {
-                return {
-                    kind: 'tw.debugger'
-                };
-            }
-            const paramNamesIdsAndDefaults = this.blocks.getProcedureParamNamesIdsAndDefaults(procedureCode);
-            if (paramNamesIdsAndDefaults === null) {
-                return {
-                    kind: 'noop'
-                };
-            }
-    
-            const [paramNames, paramIds, paramDefaults] = paramNamesIdsAndDefaults;
-    
-            const addonBlock = this.runtime.getAddonBlock(procedureCode);
-            if (addonBlock) {
-                this.script.yields = true;
-                const args = {};
-                for (let i = 0; i < paramIds.length; i++) {
-                    let value;
-                    if (block.inputs[paramIds[i]] && block.inputs[paramIds[i]].block) {
-                        value = this.descendInputOfBlock(block, paramIds[i]);
-                    } else {
-                        value = {
-                            kind: 'constant',
-                            value: paramDefaults[i]
-                        };
-                    }
-                    args[paramNames[i]] = value;
-                }
-                return {
-                    kind: 'addons.call',
-                    code: procedureCode,
-                    arguments: args,
-                    blockId: block.id
-                };
-            }
-    
-            const definitionId = this.blocks.getProcedureDefinition(procedureCode);
-            const definitionBlock = this.blocks.getBlock(definitionId);
-            if (!definitionBlock) {
-                return {
-                    kind: 'noop'
-                };
-            }
-            const innerDefinition = this.blocks.getBlock(definitionBlock.inputs.custom_block.block);
-    
-            let isWarp = this.script.isWarp;
-            if (!isWarp) {
-                if (innerDefinition && innerDefinition.mutation) {
-                    const warp = innerDefinition.mutation.warp;
-                    if (typeof warp === 'boolean') {
-                        isWarp = warp;
-                    } else if (typeof warp === 'string') {
-                        isWarp = JSON.parse(warp);
-                    }
-                }
-            }
-    
-            const variant = generateProcedureVariant(procedureCode, isWarp);
-    
-            if (!this.script.dependedProcedures.includes(variant)) {
-                this.script.dependedProcedures.push(variant);
-            }
-    
-            // Non-warp direct recursion yields.
-            if (!this.script.isWarp) {
-                if (procedureCode === this.script.procedureCode) {
-                    this.script.yields = true;
-                }
-            }
-    
-            const args = [];
-            for (let i = 0; i < paramIds.length; i++) {
-                let value;
-                if (block.inputs[paramIds[i]] && block.inputs[paramIds[i]].block) {
-                    if (paramIds[i].startsWith("SUBSTACK")) {
-                        value = this.descendSubstack(block, paramIds[i])
-                    } else {
-                        value = this.descendInputOfBlock(block, paramIds[i]);
-                    }
-                } else {
-                    value = {
-                        kind: 'constant',
-                        value: paramDefaults[i]
-                    };
-                }
-                args.push(value);
-            }
-    
-            return {
-                kind: 'procedures.call',
-                code: procedureCode,
-                variant,
-                returns: true,
-                arguments: args,
-                type: JSON.parse(block.mutation.opType || '"string"')
-            };
-        }
 
         case 'tw_getLastKeyPressed':
             return {
                 kind: 'tw.lastKeyPressed'
             };
 
-        case 'control_dualblock':
-            return {
-                kind: 'control.dualBlock'
-            };
-
         default: {
             const opcodeFunction = this.runtime.getOpcodeFunction(block.opcode);
             if (opcodeFunction) {
                 // It might be a non-compiled primitive from a standard category
-                if (compatBlocks.outputBlocks.includes(block.opcode)) {
+                if (compatBlocks.inputs.includes(block.opcode)) {
                     return this.descendCompatLayer(block);
                 }
                 // It might be an extension block.
                 const blockInfo = this.getBlockInfo(block.opcode);
                 if (blockInfo) {
                     const type = blockInfo.info.blockType;
-                    const args = this.descendCompatLayer(block);
-                    args.block = block;
-                    if (block.mutation) args.mutation = block.mutation;
                     if (type === BlockType.REPORTER || type === BlockType.BOOLEAN) {
-                        return args;
+                        return this.descendCompatLayer(block);
                     }
                 }
             }
@@ -1029,86 +697,17 @@ class ScriptTreeGenerator {
      * @returns {Node} Compiled node for this block.
      */
     descendStackedBlock (block) {
-        // check if we have extension ir for this opcode
-        const extensionId = String(block.opcode).split('_')[0];
-        const blockId = String(block.opcode).replace(extensionId + '_', '');
-        if (IRGenerator.hasExtensionIr(extensionId) && IRGenerator.getExtensionIr(extensionId)[blockId]) {
-            // this is an extension block that wants to be compiled
-            const irFunc = IRGenerator.getExtensionIr(extensionId)[blockId];
-            let irData = null;
-            // make sure irFunc isnt broken
-            try {
-                irData = irFunc(this, block);
-            } catch (err) {
-                log.warn(extensionId + '_' + blockId, 'failed to create IR data;', err);
-            }
-            if (irData) {
-                // check if it is this type, we dont want to descend an input as a stack
-                if (irData.kind === 'stack') {
-                    // set proper kind
-                    irData.kind = extensionId + '.' + blockId;
-                    return irData;
-                }
-            }
-        }
-
         switch (block.opcode) {
-        case 'your_mom':
-            return {
-                kind: 'your mom'
-            };
-        case 'control_switch':
-            return {
-                kind: 'control.switch',
-                test: this.descendInputOfBlock(block, 'CONDITION'),
-                conditions: this.descendSubstack(block, 'SUBSTACK'),
-                default: []
-            };
-        case 'control_switch_default':
-            return {
-                kind: 'control.switch',
-                test: this.descendInputOfBlock(block, 'CONDITION'),
-                conditions: this.descendSubstack(block, 'SUBSTACK1'),
-                default: this.descendSubstack(block, 'SUBSTACK2')
-            };
-        case 'control_case_next':
-            return {
-                kind: 'control.case',
-                condition: this.descendInputOfBlock(block, 'CONDITION'),
-                code: this.descendSubstack(block, 'SUBSTACK'),
-                runsNext: true
-            };
-        case 'control_case':
-            return {
-                kind: 'control.case',
-                condition: this.descendInputOfBlock(block, 'CONDITION'),
-                code: this.descendSubstack(block, 'SUBSTACK'),
-                runsNext: false
-            };
-        case 'control_exitCase':
-            return {
-                kind: 'control.exitCase'
-            };
-        case 'control_exitLoop':
-            return {
-                kind: 'control.exitLoop',
-                id: block.id
-            };
-        case 'control_continueLoop':
-            return {
-                kind: 'control.continueLoop',
-                id: block.id
-            };
         case 'control_all_at_once':
             // In Scratch 3, this block behaves like "if 1 = 1"
-            // WE ARE IN PM NOW IT BEHAVES PROPERLY LESS GO
             return {
-                kind: 'control.allAtOnce',
+                kind: 'control.if',
                 condition: {
                     kind: 'constant',
                     value: true
                 },
-                code: this.descendSubstack(block, 'SUBSTACK')
+                whenTrue: this.descendSubstack(block, 'SUBSTACK'),
+                whenFalse: []
             };
         case 'control_clear_counter':
             return {
@@ -1156,71 +755,14 @@ class ScriptTreeGenerator {
                 whenTrue: this.descendSubstack(block, 'SUBSTACK'),
                 whenFalse: this.descendSubstack(block, 'SUBSTACK2')
             };
-        case 'control_expandableIf': {
-            const branchCount = Number(block.mutation.branches);
-            const hasElse = block.mutation["ends-in-else"] === "true";
-            const branches = Array(branchCount).fill(null);
-
-            // run normally if no extra branches
-            if (branchCount < 3 && (branchCount === 1 ? true : hasElse)) {
-                return {
-                    kind: 'control.if',
-                    condition: this.descendInputOfBlock(block, 'BOOL1'),
-                    whenTrue: this.descendSubstack(block, 'SUBSTACK1'),
-                    whenFalse: hasElse ? this.descendSubstack(block, 'SUBSTACK2') : []
-                };
-            }
-
-            for (var i = 1; i < branchCount + 1; i++) {
-                const name = 'SUBSTACK' + i;
-                const boolName = 'BOOL' + i;
-                const boolValue = this.descendInputOfBlock(block, boolName);
-                if (boolValue.value === null) {
-                    boolValue.value = i === branchCount && hasElse ? null : false;
-                }
-                branches[i - 1] = [boolValue, this.descendSubstack(block, name)];
-            }
-
-            return {
-                kind: 'control.expandableIf',
-                branches
-            };
-        }
-        case 'control_try_catch':
-            return {
-                kind: 'control.trycatch',
-                try: this.descendSubstack(block, 'SUBSTACK'),
-                catch: this.descendSubstack(block, 'SUBSTACK2')
-            };
-        case 'control_throw_error':
-            return {
-                kind: 'control.throwError',
-                error: this.descendInputOfBlock(block, 'ERROR'),
-            };
         case 'control_incr_counter':
             return {
                 kind: 'counter.increment'
-            };
-        case 'control_decr_counter':
-            return {
-                kind: 'counter.decrement'
-            };
-        case 'control_set_counter':
-            return {
-                kind: 'counter.set',
-                value: this.descendInputOfBlock(block, 'VALUE')
             };
         case 'control_repeat':
             this.analyzeLoop();
             return {
                 kind: 'control.repeat',
-                times: this.descendInputOfBlock(block, 'TIMES'),
-                do: this.descendSubstack(block, 'SUBSTACK')
-            };
-        case 'control_repeatForSeconds':
-            this.analyzeLoop();
-            return {
-                kind: 'control.repeatForSeconds',
                 times: this.descendInputOfBlock(block, 'TIMES'),
                 do: this.descendSubstack(block, 'SUBSTACK')
             };
@@ -1270,22 +812,10 @@ class ScriptTreeGenerator {
                 kind: 'control.wait',
                 seconds: this.descendInputOfBlock(block, 'DURATION')
             };
-        case 'control_waittick':
-            this.script.yields = true;
-            return {
-                kind: 'control.waitTick'
-            };
         case 'control_wait_until':
             this.script.yields = true;
             return {
                 kind: 'control.waitUntil',
-                condition: this.descendInputOfBlock(block, 'CONDITION')
-            };
-        case 'control_waitsecondsoruntil':
-            this.script.yields = true;
-            return {
-                kind: 'control.waitOrUntil',
-                seconds: this.descendInputOfBlock(block, 'DURATION'),
                 condition: this.descendInputOfBlock(block, 'CONDITION')
             };
         case 'control_while':
@@ -1297,17 +827,7 @@ class ScriptTreeGenerator {
                 // We should consider analyzing this like we do for control_repeat_until
                 warpTimer: false
             };
-        case 'control_run_as_sprite':
-            return {
-                kind: 'control.runAsSprite',
-                sprite: this.descendInputOfBlock(block, 'RUN_AS_OPTION'),
-                substack: this.descendSubstack(block, 'SUBSTACK')
-            };
-        case 'control_new_script':
-            return {
-                kind: 'control.newScript',
-                substack: this.descendSubstack(block, 'SUBSTACK')
-            };
+
         case 'data_addtolist':
             return {
                 kind: 'list.add',
@@ -1334,24 +854,6 @@ class ScriptTreeGenerator {
                 kind: 'list.deleteAll',
                 list: this.descendVariable(block, 'LIST', LIST_TYPE)
             };
-        case 'data_listforeachnum':
-            this.analyzeLoop();
-            return {
-                kind: 'list.forEach',
-                num: true,
-                list: this.descendVariable(block, 'LIST', LIST_TYPE),
-                variable: this.descendVariable(block, 'VARIABLE', SCALAR_TYPE),
-                do: this.descendSubstack(block, 'SUBSTACK')
-            };
-        case 'data_listforeachitem':
-            this.analyzeLoop();
-            return {
-                kind: 'list.forEach',
-                num: false,
-                list: this.descendVariable(block, 'LIST', LIST_TYPE),
-                variable: this.descendVariable(block, 'VARIABLE', SCALAR_TYPE),
-                do: this.descendSubstack(block, 'SUBSTACK')
-            };
         case 'data_deleteoflist': {
             const index = this.descendInputOfBlock(block, 'INDEX');
             if (index.kind === 'constant' && index.value === 'all') {
@@ -1364,13 +866,6 @@ class ScriptTreeGenerator {
                 kind: 'list.delete',
                 list: this.descendVariable(block, 'LIST', LIST_TYPE),
                 index: index
-            };
-        }
-        case 'data_shiftlist': {
-            return {
-                kind: 'list.shift',
-                list: this.descendVariable(block, 'LIST', LIST_TYPE),
-                index: this.descendInputOfBlock(block, 'INDEX')
             };
         }
         case 'data_hidelist':
@@ -1413,12 +908,6 @@ class ScriptTreeGenerator {
                 kind: 'var.show',
                 variable: this.descendVariable(block, 'VARIABLE', SCALAR_TYPE)
             };
-        case 'data_filterlist':
-            return {
-                kind: 'list.filter',
-                list: this.descendVariable(block, 'LIST', LIST_TYPE),
-                bool: this.descendInputOfBlock(block, 'BOOL')
-            };
 
         case 'event_broadcast':
             return {
@@ -1458,17 +947,6 @@ class ScriptTreeGenerator {
                 kind: 'looks.backwardLayers',
                 layers: this.descendInputOfBlock(block, 'NUM')
             };
-        case 'looks_goTargetLayer':
-            if (block.fields.FORWARD_BACKWARD.value === 'infront') {
-                return {
-                    kind: 'looks.targetFront',
-                    layers: this.descendInputOfBlock(block, 'VISIBLE_OPTION')
-                };
-            }
-            return {
-                kind: 'looks.targetBack',
-                layers: this.descendInputOfBlock(block, 'VISIBLE_OPTION')
-            };
         case 'looks_gotofrontback':
             if (block.fields.FRONT_BACK.value === 'front') {
                 return {
@@ -1500,29 +978,6 @@ class ScriptTreeGenerator {
             return {
                 kind: 'looks.setSize',
                 size: this.descendInputOfBlock(block, 'SIZE')
-            };
-        case "looks_setFont": 
-            return {
-                kind: 'looks.setFont',
-                font: this.descendInputOfBlock(block, 'font'),
-                size: this.descendInputOfBlock(block, 'size')
-            };
-        case "looks_setColor": 
-            return {
-                kind: 'looks.setColor',
-                prop: block.fields.prop.value,
-                color: this.descendInputOfBlock(block, 'color')
-            };
-        case "looks_setTintColor":
-            return {
-                kind: 'looks.setTintColor',
-                color: this.descendInputOfBlock(block, 'color')
-            };
-        case "looks_setShape": 
-            return {
-                kind: 'looks.setShape',
-                prop: block.fields.prop.value,
-                value: this.descendInputOfBlock(block, 'color')
             };
         case 'looks_show':
             return {
@@ -1670,444 +1125,53 @@ class ScriptTreeGenerator {
             return {
                 kind: 'pen.stamp'
             };
-        case 'procedures_return': {
-            const topBlock = this.getBlockById(this.thread.topBlock);
-            return {
-                kind: 'procedures.return',
-                return: this.descendInputOfBlock(block, 'return'),
-                isDefineClicked: topBlock ? topBlock.opcode === "procedures_return" || topBlock.opcode.startsWith("procedures_definition") : false,
-                compilerInfo: {
-                    jwArrayUnmodified: true
-                }
-            };
-        }
-        case 'procedures_set': 
-            return {
-                kind: 'procedures.set',
-                param: this.descendInputOfBlock(block, "PARAM"),
-                val: this.descendInputOfBlock(block, "VALUE")
-            };
-        case 'procedures_call': {
-            // setting of yields will be handled later in the analysis phase
-            // patches output previewing
-            if (block.mutation.returns === 'true') {
-                const Block = Clone.simple(block);
-                Block.opcode = 'procedures_call_return';
-                return this.descendStackedBlock(Block);
-            }
 
+        case 'procedures_call': {
             const procedureCode = block.mutation.proccode;
+            if (block.mutation.return) {
+                const visualReport = this.descendVisualReport(block);
+                if (visualReport) {
+                    return visualReport;
+                }
+            }
             if (procedureCode === 'tw:debugger;') {
                 return {
                     kind: 'tw.debugger'
                 };
             }
-            const paramNamesIdsAndDefaults = this.blocks.getProcedureParamNamesIdsAndDefaults(procedureCode);
-            if (paramNamesIdsAndDefaults === null) {
-                return {
-                    kind: 'noop'
-                };
-            }
-
-            const [paramNames, paramIds, paramDefaults] = paramNamesIdsAndDefaults;
-
-            const addonBlock = this.runtime.getAddonBlock(procedureCode);
-            if (addonBlock) {
-                this.script.yields = true;
-                const args = {};
-                for (let i = 0; i < paramIds.length; i++) {
-                    let value;
-                    if (block.inputs[paramIds[i]] && block.inputs[paramIds[i]].block) {
-                        value = this.descendInputOfBlock(block, paramIds[i]);
-                    } else {
-                        value = {
-                            kind: 'constant',
-                            value: paramDefaults[i]
-                        };
-                    }
-                    args[paramNames[i]] = value;
-                }
-                return {
-                    kind: 'addons.call',
-                    code: procedureCode,
-                    arguments: args,
-                    blockId: block.id
-                };
-            }
-
-            const definitionId = this.blocks.getProcedureDefinition(procedureCode);
-            const definitionBlock = this.blocks.getBlock(definitionId);
-            if (!definitionBlock) {
-                return {
-                    kind: 'noop'
-                };
-            }
-            const innerDefinition = this.blocks.getBlock(definitionBlock.inputs.custom_block.block);
-
-            let isWarp = this.script.isWarp;
-            if (!isWarp) {
-                if (innerDefinition && innerDefinition.mutation) {
-                    const warp = innerDefinition.mutation.warp;
-                    if (typeof warp === 'boolean') {
-                        isWarp = warp;
-                    } else if (typeof warp === 'string') {
-                        isWarp = JSON.parse(warp);
-                    }
-                }
-            }
-
-            const variant = generateProcedureVariant(procedureCode, isWarp);
-
-            if (!this.script.dependedProcedures.includes(variant)) {
-                this.script.dependedProcedures.push(variant);
-            }
-
-            // Non-warp direct recursion yields.
-            if (!this.script.isWarp) {
-                if (procedureCode === this.script.procedureCode) {
-                    this.script.yields = true;
-                }
-            }
-
-            const args = [];
-            for (let i = 0; i < paramIds.length; i++) {
-                let value;
-                if (block.inputs[paramIds[i]] && block.inputs[paramIds[i]].block) {
-                    if (paramIds[i].startsWith("SUBSTACK")) {
-                        value = this.descendSubstack(block, paramIds[i])
-                    } else {
-                        value = this.descendInputOfBlock(block, paramIds[i]);
-                    }
-                } else {
-                    value = {
-                        kind: 'constant',
-                        value: paramDefaults[i]
-                    };
-                }
-                args.push(value);
-            }
-
-            return {
-                kind: 'procedures.call',
-                code: procedureCode,
-                variant,
-                returns: false,
-                arguments: args,
-                type: JSON.parse(block.mutation.optype || '"statement"')
-            };
+            return this.descendProcedure(block);
         }
-
-        case 'sensing_set_of':
+        case 'procedures_return':
             return {
-                kind: 'sensing.set.of',
-                property: block.fields.PROPERTY.value,
-                object: this.descendInputOfBlock(block, 'OBJECT'),
+                kind: 'procedures.return',
                 value: this.descendInputOfBlock(block, 'VALUE')
             };
+
         case 'sensing_resettimer':
             return {
                 kind: 'timer.reset'
-            };
-
-            /*
-            can someone set up the jsgen for these, i dont want to rn
-            case "sensing_regextest":
-                return {
-                    kind: "sensing.regextest",
-                    regex: this.descendInputOfBlock(block, 'reg'),
-                    text: this.descendInputOfBlock(block, 'text')
-                }
-            case "sensing_thing_is_number":
-                return {
-                    kind: "sensing.thing.is.number",
-                    text: this.descendInputOfBlock(block, 'TEXT1')
-                }
-            case "sensing_mobile":
-                return {
-                    kind: "sensing.mobile",
-                }
-            case "sensing_thing_is_text":
-                return {
-                    kind: "sensing.thing.is.text",
-                    text: this.descendInputOfBlock(block, 'TEXT1')
-                }
-            case "sensing_getspritewithattrib":
-                return {
-                    kind: "sensing.getspritewithattrib",
-                    variable: this.descendInputOfBlock(block, 'var'),
-                    value: this.descendInputOfBlock(block, 'val')
-                }
-
-            case "operator_regexmatch":
-                return {
-                    kind: "operator.regexmatch",
-                    regex: this.descendInputOfBlock(block, 'reg'),
-                    text: this.descendInputOfBlock(block, 'text')
-                }
-            case "operator_replaceAll":
-                return {
-                    kind: "operator.replaceAll",
-                    text: this.descendInputOfBlock(block, 'term'),
-                    with: this.descendInputOfBlock(block, 'res'),
-                    in: this.descendInputOfBlock(block, 'text')
-                }
-            case "operator_getLettersFromIndexToIndexInTextFixed":
-            case "operator_getLettersFromIndexToIndexInText":
-                return {
-                    kind: "operator.getLettersFromIndexToIndexInText",
-                    from: this.descendInputOfBlock(block, 'INDEX1'),
-                    to: this.descendInputOfBlock(block, 'INDEX2'),
-                    ammount: this.descendInputOfBlock(block, 'TEXT')
-                }
-            case "operator_readLineInMultilineText":
-                return {
-                    kind: "operator.readLineInMultilineText",
-                    line: this.descendInputOfBlock(block, 'LINE'),
-                    text: this.descendInputOfBlock(block, 'TEXT')
-                }
-            case "operator_newLine":
-                return {
-                    kind: "operator.newLine",
-                }
-            case "operator_stringify":
-                return {
-                    kind: "operator.stringify",
-                    pass: this.descendInputOfBlock(block, 'ONE')
-                }
-            case "operator_lerpFunc":
-                return {
-                    kind: "operator.lerpFunc",
-                    from: this.descendInputOfBlock(block, 'ONE'),
-                    to: this.descendInputOfBlock(block, 'TWO'),
-                    ammount: this.descendInputOfBlock(block, 'AMOUNT')
-                }
-            case "operator_advMath":
-                return {
-                    kind: "operator.advMath",
-                    num1: this.descendInputOfBlock(block, 'ONE'),
-                    num2: this.descendInputOfBlock(block, 'TWO'),
-                    op: block.fields.OPTION.value
-                }
-            case "operator_constrainnumber":
-                return {
-                    kind: "operator.constrainnumber",
-                    number: this.descendInputOfBlock(block, 'inp'),
-                    min: this.descendInputOfBlock(block, 'min'),
-                    max: this.descendInputOfBlock(block, 'max')
-                }
-            case "operator_trueBoolean":
-                return {
-                    kind: "operator.trueBoolean",
-                }
-            case "operator_falseBoolean":
-                return {
-                    kind: "operator.falseBoolean",
-                }
-            case "operator_randomBoolean":
-                return {
-                    kind: "operator.randomBoolean",
-                }
-            case "operator_indexOfTextInText":
-                return {
-                    kind: "operator.indexOfTextInText",
-                    check: this.descendInputOfBlock(block, 'TEXT1'),
-                    text: this.descendInputOfBlock(block, 'TEXT2')
-                }
-
-            case "event_whenanything":
-                return {
-                    kind: "event.whenanything",
-                }
-            case "event_always":
-                return {
-                    kind: "event.always",
-                    event: this.descendInputOfBlock(block, 'ANYTHING')
-                }
-
-            case "control_backToGreenFlag":
-                return {
-                    kind: "control.backToGreenFlag",
-                }
-            case "control_if_return_else_return":
-                return {
-                    kind: "control.if.return.else.return",
-                    if: this.descendInputOfBlock(block, 'boolean'),
-                    true: this.descendInputOfBlock(block, 'TEXT1'),
-                    false: this.descendInputOfBlock(block, 'TEXT2'),
-                }
-            all the names so you dont have to get them 
-            sensing.regextest
-            sensing.thing.is.number
-            sensing.mobile
-            sensing.thing.is.text
-            sensing.getspritewithattrib
-
-            operator.regexmatch
-            operator.replaceAll
-            operator.getLettersFromIndexToIndexInText
-            operator.readLineInMultilineText
-            operator.newLine
-            operator.stringify
-            operator.lerpFunc
-            operator.advMath
-            operator.constrainnumber
-            operator.trueBoolean
-            operator.falseBoolean
-            operator.randomBoolean
-            operator.indexOfTextInText
-
-            event.whenanything
-            event.always
-
-            control.backToGreenFlag
-            control.if.return.else.return
-            */
-
-        case 'lmsTempVars2_setRuntimeVariable':
-            return {
-                kind: 'tempVars.set',
-                var: this.descendInputOfBlock(block, 'VAR'),
-                val: this.descendInputOfBlock(block, 'STRING'),
-                runtime: true
-            };
-        case 'lmsTempVars2_setThreadVariable':
-            return {
-                kind: 'tempVars.set',
-                var: this.descendInputOfBlock(block, 'VAR'),
-                val: this.descendInputOfBlock(block, 'STRING'),
-                thread: true
-            };
-        case 'tempVars_setVariable':
-            return {
-                kind: 'tempVars.set',
-                var: this.descendInputOfBlock(block, 'name'),
-                val: this.descendInputOfBlock(block, 'value')
-            };
-        
-        case 'lmsTempVars2_changeRuntimeVariable':
-            const name = this.descendInputOfBlock(block, 'VAR');
-            return {
-                kind: 'tempVars.set',
-                var: name,
-                val: {
-                    kind: 'op.add',
-                    left: {
-                        kind: 'tempVars.get',
-                        var: name,
-                        runtime: true
-                    },
-                    right: this.descendInputOfBlock(block, 'NUM')
-                },
-                runtime: true
-            };
-        case 'lmsTempVars2_changeThreadVariable': {
-            const name = this.descendInputOfBlock(block, 'VAR');
-            return {
-                kind: 'tempVars.set',
-                var: name,
-                val: {
-                    kind: 'op.add',
-                    left: {
-                        kind: 'tempVars.get',
-                        var: name,
-                        thread: true
-                    },
-                    right: this.descendInputOfBlock(block, 'NUM')
-                },
-                thread: true
-            };
-        }
-        case 'tempVars_changeVariable': {
-            const name = this.descendInputOfBlock(block, 'name');
-            return {
-                kind: 'tempVars.set',
-                var: name,
-                val: {
-                    kind: 'op.add',
-                    left: {
-                        kind: 'tempVars.get',
-                        var: name
-                    },
-                    right: this.descendInputOfBlock(block, 'value')
-                }
-            };
-        }
-
-        case 'lmsTempVars2_deleteRuntimeVariable':
-            return {
-                kind: 'tempVars.delete',
-                var: this.descendInputOfBlock(block, 'VAR'),
-                runtime: true
-            };
-        case 'tempVars_deleteVariable':
-            return {
-                kind: 'tempVars.delete',
-                var: this.descendInputOfBlock(block, 'name')
-            };
-
-        case 'lmsTempVars2_deleteAllRuntimeVariables':
-            return {
-                kind: 'tempVars.deleteAll',
-                runtime: true
-            };
-        case 'tempVars_deleteAllVariables':
-            return {
-                kind: 'tempVars.deleteAll'
-            };
-
-        case 'lmsTempVars2_forEachThreadVariable':
-            return {
-                kind: 'tempVars.forEach',
-                var: this.descendInputOfBlock(block, 'VAR'),
-                loops: this.descendInputOfBlock(block, 'NUM'),
-                do: this.descendSubstack(block, 'SUBSTACK'),
-                thread: true
-            };
-        case 'tempVars_forEachTempVar':
-            this.analyzeLoop();
-            return {
-                kind: 'tempVars.forEach',
-                var: this.descendInputOfBlock(block, 'NAME'),
-                loops: this.descendInputOfBlock(block, 'REPEAT'),
-                do: this.descendSubstack(block, 'SUBSTACK')
-            };
-        case 'control_dualblock':
-            return {
-                kind: 'control.dualBlock'
             };
 
         default: {
             const opcodeFunction = this.runtime.getOpcodeFunction(block.opcode);
             if (opcodeFunction) {
                 // It might be a non-compiled primitive from a standard category
-                if (compatBlocks.statementBlocks.includes(block.opcode)) {
+                if (compatBlocks.stacked.includes(block.opcode)) {
                     return this.descendCompatLayer(block);
                 }
                 // It might be an extension block.
                 const blockInfo = this.getBlockInfo(block.opcode);
                 if (blockInfo) {
                     const type = blockInfo.info.blockType;
-                    const args = this.descendCompatLayer(block, blockInfo.info);
-                    args.block = block;
-                    if (block.mutation) args.mutation = block.mutation;
                     if (type === BlockType.COMMAND || type === BlockType.CONDITIONAL || type === BlockType.LOOP) {
-                        return args;
+                        return this.descendCompatLayer(block);
                     }
                 }
             }
 
-            // When this thread was triggered by a stack click, attempt to compile as an input.
-            // TODO: perhaps this should be moved to generate()?
-            if (this.thread.stackClick) {
-                try {
-                    const inputNode = this.descendInput(block);
-                    return {
-                        kind: 'visualReport',
-                        input: inputNode
-                    };
-                } catch (e) {
-                    // Ignore
-                }
+            const asVisualReport = this.descendVisualReport(block);
+            if (asVisualReport) {
+                return asVisualReport;
             }
 
             log.warn(`IR: Unknown stacked block: ${block.opcode}`, block);
@@ -2169,7 +1233,7 @@ class ScriptTreeGenerator {
         const variable = block.fields[fieldName];
         const id = variable.id;
 
-        if (this.variableCache.hasOwnProperty(id)) {
+        if (Object.prototype.hasOwnProperty.call(this.variableCache, id)) {
             return this.variableCache[id];
         }
 
@@ -2190,20 +1254,20 @@ class ScriptTreeGenerator {
         const stage = this.stage;
 
         // Look for by ID in target...
-        if (target.variables.hasOwnProperty(id)) {
+        if (Object.prototype.hasOwnProperty.call(target.variables, id)) {
             return createVariableData('target', target.variables[id]);
         }
 
         // Look for by ID in stage...
         if (!target.isStage) {
-            if (stage && stage.variables.hasOwnProperty(id)) {
+            if (stage && Object.prototype.hasOwnProperty.call(stage.variables, id)) {
                 return createVariableData('stage', stage.variables[id]);
             }
         }
 
         // Look for by name and type in target...
         for (const varId in target.variables) {
-            if (target.variables.hasOwnProperty(varId)) {
+            if (Object.prototype.hasOwnProperty.call(target.variables, varId)) {
                 const currVar = target.variables[varId];
                 if (currVar.name === name && currVar.type === type) {
                     return createVariableData('target', currVar);
@@ -2214,7 +1278,7 @@ class ScriptTreeGenerator {
         // Look for by name and type in stage...
         if (!target.isStage && stage) {
             for (const varId in stage.variables) {
-                if (stage.variables.hasOwnProperty(varId)) {
+                if (Object.prototype.hasOwnProperty.call(stage.variables, varId)) {
                     const currVar = stage.variables[varId];
                     if (currVar.name === name && currVar.type === type) {
                         return createVariableData('stage', currVar);
@@ -2224,7 +1288,7 @@ class ScriptTreeGenerator {
         }
 
         // Create it locally...
-        const newVariable = this.runtime.newVariableInstance(type, id, name, false);
+        const newVariable = new Variable(id, name, type, false);
         target.variables[id] = newVariable;
 
         if (target.sprite) {
@@ -2232,13 +1296,104 @@ class ScriptTreeGenerator {
             // This is necessary because the script cache is shared between clones.
             // sprite.clones has all instances of this sprite including the original and all clones
             for (const clone of target.sprite.clones) {
-                if (!clone.variables.hasOwnProperty(id)) {
-                    clone.variables[id] = this.runtime.newVariableInstance(type, id, name, false);
+                if (!Object.prototype.hasOwnProperty.call(clone.variables, id)) {
+                    clone.variables[id] = new Variable(id, name, type, false);
                 }
             }
         }
 
         return createVariableData('target', newVariable);
+    }
+
+    descendProcedure (block) {
+        const procedureCode = block.mutation.proccode;
+        const paramNamesIdsAndDefaults = this.blocks.getProcedureParamNamesIdsAndDefaults(procedureCode);
+        if (paramNamesIdsAndDefaults === null) {
+            return {
+                kind: 'noop'
+            };
+        }
+
+        const [paramNames, paramIds, paramDefaults] = paramNamesIdsAndDefaults;
+
+        const addonBlock = this.runtime.getAddonBlock(procedureCode);
+        if (addonBlock) {
+            this.script.yields = true;
+            const args = {};
+            for (let i = 0; i < paramIds.length; i++) {
+                let value;
+                if (block.inputs[paramIds[i]] && block.inputs[paramIds[i]].block) {
+                    value = this.descendInputOfBlock(block, paramIds[i]);
+                } else {
+                    value = {
+                        kind: 'constant',
+                        value: paramDefaults[i]
+                    };
+                }
+                args[paramNames[i]] = value;
+            }
+            return {
+                kind: 'addons.call',
+                code: procedureCode,
+                arguments: args,
+                blockId: block.id
+            };
+        }
+
+        const definitionId = this.blocks.getProcedureDefinition(procedureCode);
+        const definitionBlock = this.blocks.getBlock(definitionId);
+        if (!definitionBlock) {
+            return {
+                kind: 'noop'
+            };
+        }
+        const innerDefinition = this.blocks.getBlock(definitionBlock.inputs.custom_block.block);
+
+        let isWarp = this.script.isWarp;
+        if (!isWarp) {
+            if (innerDefinition && innerDefinition.mutation) {
+                const warp = innerDefinition.mutation.warp;
+                if (typeof warp === 'boolean') {
+                    isWarp = warp;
+                } else if (typeof warp === 'string') {
+                    isWarp = JSON.parse(warp);
+                }
+            }
+        }
+
+        const variant = generateProcedureVariant(procedureCode, isWarp);
+
+        if (!this.script.dependedProcedures.includes(variant)) {
+            this.script.dependedProcedures.push(variant);
+        }
+
+        // Non-warp direct recursion yields.
+        if (!this.script.isWarp) {
+            if (procedureCode === this.script.procedureCode) {
+                this.script.yields = true;
+            }
+        }
+
+        const args = [];
+        for (let i = 0; i < paramIds.length; i++) {
+            let value;
+            if (block.inputs[paramIds[i]] && block.inputs[paramIds[i]].block) {
+                value = this.descendInputOfBlock(block, paramIds[i]);
+            } else {
+                value = {
+                    kind: 'constant',
+                    value: paramDefaults[i]
+                };
+            }
+            args.push(value);
+        }
+
+        return {
+            kind: 'procedures.call',
+            code: procedureCode,
+            variant,
+            arguments: args
+        };
     }
 
     /**
@@ -2247,39 +1402,34 @@ class ScriptTreeGenerator {
      * @private
      * @returns {Node} The parsed node.
      */
-    descendCompatLayer (block, blockInfo) {
+    descendCompatLayer (block) {
         this.script.yields = true;
-        if (!blockInfo) {
-            blockInfo = this.getBlockInfo(block.opcode);
-            blockInfo = blockInfo ? blockInfo.info : null;
-        }
-        
+
         const inputs = {};
         for (const name of Object.keys(block.inputs)) {
             if (!name.startsWith('SUBSTACK')) {
                 inputs[name] = this.descendInputOfBlock(block, name);
-                if (blockInfo && blockInfo.arguments[name]) inputs[name].compilerInfo = ScriptTreeGenerator.addCompilerInfo(inputs[name], blockInfo.arguments[name].compilerInfo)
             }
         }
 
         const fields = {};
-        const substacks = [];
-        const blockType = (blockInfo && blockInfo.blockType) || BlockType.COMMAND;
-        if (blockType === BlockType.CONDITIONAL || blockType === BlockType.LOOP) {
-            for (let i in (blockInfo.branches || [])) {
-                const inputName = i === "0" ? 'SUBSTACK' : `SUBSTACK${Number(i) + 1}`;
-                substacks.push(this.descendSubstack(block, inputName));
-            }
-        }
         for (const name of Object.keys(block.fields)) {
-            const type = block.fields[name].variableType;
-            if (typeof type !== 'undefined') {
-                const data = this.descendVariable(block, name, type);
-                fields[name] = data;
-                continue;
-            }
             fields[name] = block.fields[name].value;
         }
+
+        const blockInfo = this.getBlockInfo(block.opcode);
+        const blockType = (blockInfo && blockInfo.info && blockInfo.info.blockType) || BlockType.COMMAND;
+        const substacks = {};
+        if (blockType === BlockType.CONDITIONAL || blockType === BlockType.LOOP) {
+            for (const inputName in block.inputs) {
+                if (!inputName.startsWith('SUBSTACK')) continue;
+                const branchNum = inputName === 'SUBSTACK' ? 1 : +inputName.substring('SUBSTACK'.length);
+                if (!isNaN(branchNum)) {
+                    substacks[branchNum] = this.descendSubstack(block, inputName);
+                }
+            }
+        }
+
         return {
             kind: 'compat',
             id: block.id,
@@ -2287,8 +1437,7 @@ class ScriptTreeGenerator {
             blockType,
             inputs,
             fields,
-            substacks,
-            compilerInfo: (blockInfo && blockInfo.compilerInfo) || {}
+            substacks
         };
     }
 
@@ -2328,11 +1477,25 @@ class ScriptTreeGenerator {
             break;
         }
     }
-    
+
+    descendVisualReport (block) {
+        if (!this.thread.stackClick || block.next) {
+            return null;
+        }
+        try {
+            return {
+                kind: 'visualReport',
+                input: this.descendInput(block)
+            };
+        } catch (e) {
+            return null;
+        }
+    }
+
     /**
      * @param {Block} hatBlock
      */
-    walkHat(hatBlock) {
+    walkHat (hatBlock) {
         const nextBlock = hatBlock.next;
         const opcode = hatBlock.opcode;
         const hatInfo = this.runtime._hats[opcode];
@@ -2412,10 +1575,7 @@ class ScriptTreeGenerator {
             // We don't evaluate the procedures_definition top block as it never does anything
             // We also don't want it to be treated like a hat block
             let entryBlock;
-            if (
-                topBlock.opcode === 'procedures_definition'
-                || topBlock.opcode === 'procedures_definition_return'
-            ) {
+            if (topBlock.opcode === 'procedures_definition') {
                 entryBlock = topBlock.next;
             } else {
                 entryBlock = topBlockId;
@@ -2424,10 +1584,6 @@ class ScriptTreeGenerator {
             if (entryBlock) {
                 this.script.stack = this.walkStack(entryBlock);
             }
-        }
-
-        if (this.debug) {
-            log.info(`IR: ${this.target.getName()}: compiled ${this.script.procedureCode || 'script'}`, this.script.stack);
         }
 
         return this.script;
@@ -2447,20 +1603,9 @@ class IRGenerator {
         this.analyzedProcedures = [];
     }
 
-    static _extensionIRInfo = {};
-    static setExtensionIr(id, data) {
-        IRGenerator._extensionIRInfo[id] = data;
-    }
-    static hasExtensionIr(id) {
-        return Boolean(IRGenerator._extensionIRInfo[id]);
-    }
-    static getExtensionIr(id) {
-        return IRGenerator._extensionIRInfo[id];
-    }
-
     addProcedureDependencies (dependencies) {
         for (const procedureVariant of dependencies) {
-            if (this.procedures.hasOwnProperty(procedureVariant)) {
+            if (Object.prototype.hasOwnProperty.call(this.procedures, procedureVariant)) {
                 continue;
             }
             if (this.compilingProcedures.has(procedureVariant)) {
@@ -2551,10 +1696,9 @@ class IRGenerator {
         ir.procedures = this.procedures;
         return ir;
     }
-    
-    static exports = {
-        ScriptTreeGenerator
-    }
 }
 
-module.exports = IRGenerator;
+module.exports = {
+    ScriptTreeGenerator,
+    IRGenerator
+};

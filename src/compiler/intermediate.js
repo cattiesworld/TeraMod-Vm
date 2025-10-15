@@ -27,6 +27,12 @@ class IntermediateScript {
         this.isProcedure = false;
 
         /**
+         * This procedure's variant, if any.
+         * @type {string}
+         */
+        this.procedureVariant = '';
+
+        /**
          * This procedure's code, if any.
          * @type {string}
          */
@@ -43,18 +49,6 @@ class IntermediateScript {
          * @type {boolean}
          */
         this.isWarp = false;
-
-        /**
-         * pm: Whether this script should use dangerous optimizations.
-         * @type {boolean}
-         */
-        this.isOptimized = false;
-
-        /**
-         * pm: An object containing stuff for optimization.
-         * @type {object}
-         */
-        this.optimizationUtil = {};
 
         /**
          * Whether this script can `yield`
@@ -81,7 +75,7 @@ class IntermediateScript {
          * @type {Function|null}
          */
         this.cachedCompileResult = null;
-        
+
         /**
          * Whether the top block of this script is an executable hat.
          * @type {boolean}

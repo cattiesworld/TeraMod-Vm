@@ -8,7 +8,7 @@
  * ... pass some time ...
  * var timeDifference = timer.timeElapsed();
  * ---
- * Or, you can use the `time` and `relativeTime`
+ * Or, you can use the `time` function
  * to do some measurement yourself.
  */
 
@@ -25,11 +25,6 @@ class Timer {
          * which is sometimes useful for compatibility with Scratch 2
          */
         this.nowObj = nowObj;
-
-        /**
-         * Detirmins if this timer is paused or not
-         */
-        this._pausedTime = null;
     }
 
     /**
@@ -74,17 +69,6 @@ class Timer {
     }
 
     /**
-     * Returns a time accurate relative to other times produced by this function.
-     * If possible, will use sub-millisecond precision.
-     * If not, will use millisecond precision.
-     * Not guaranteed to produce the same absolute values per-system.
-     * @returns {number} ms-scale accurate time relative to other relative times.
-     */
-    relativeTime () {
-        return this.nowObj.now();
-    }
-
-    /**
      * Start a timer for measuring elapsed time,
      * at the most accurate precision possible.
      */
@@ -92,27 +76,8 @@ class Timer {
         this.startTime = this.nowObj.now();
     }
 
-    /**
-     * pause the timer
-     */
-    pause() {
-        if (this._pausedTime) return;
-        this._pausedTime = this.timeElapsed();
-    }
-
-    /**
-     * unpause the timer
-     */
-    play() {
-        if (!this._pausedTime) return;
-        this.startTime = this.nowObj.now() - this._pausedTime;
-        this._pausedTime = null;
-    }
-
     timeElapsed () {
-        if (this._pausedTime) return this._pausedTime;
-        const now = this.nowObj.now();
-        return now - this.startTime;
+        return this.nowObj.now() - this.startTime;
     }
 
     /**

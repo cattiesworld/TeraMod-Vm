@@ -204,23 +204,6 @@ class Scratch3MakeyMakeyBlocks {
                             defaultValue: this.DEFAULT_SEQUENCES[0]
                         }
                     }
-                },
-                "---",
-                {
-                    opcode: 'isMakeyKeyPressed',
-                    text: formatMessage({
-                        id: 'makeymakey.isKeyPressed',
-                        default: 'is [KEY] key pressed',
-                        description: 'is a keyboard key is pressed'
-                    }),
-                    blockType: BlockType.BOOLEAN,
-                    arguments: {
-                        KEY: {
-                            type: ArgumentType.STRING,
-                            menu: 'KEY',
-                            defaultValue: KEY_ID_SPACE
-                        }
-                    }
                 }
             ],
             menus: {
@@ -327,16 +310,6 @@ class Scratch3MakeyMakeyBlocks {
         return (isDown && this.frameToggle);
     }
 
-    isMakeyKeyPressed (args, util) {
-        let key = args.KEY;
-        // Convert the key arg, if it is a KEY_ID, to the key name used by
-        // the Keyboard io module.
-        if (SCRATCH_KEY_NAME[args.KEY]) {
-            key = SCRATCH_KEY_NAME[args.KEY];
-        }
-        return util.ioQuery('keyboard', 'getKeyIsDown', [key]);
-    }
-
     /*
      * A function called on the KEY_PRESSED event, to update the key press
      * buffer and check if any of the key sequences have been completed.
@@ -395,7 +368,7 @@ class Scratch3MakeyMakeyBlocks {
      */
     addSequence (sequenceString, sequenceArray) {
         // If we already have this sequence string, return.
-        if (this.sequences.hasOwnProperty(sequenceString)) {
+        if (Object.prototype.hasOwnProperty.call(this.sequences, sequenceString)) {
             return;
         }
         this.sequences[sequenceString] = {

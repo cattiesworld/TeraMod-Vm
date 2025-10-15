@@ -1,4 +1,4 @@
-const JSZip = require('jszip');
+const JSZip = require('@turbowarp/jszip');
 const log = require('../util/log');
 
 /**
@@ -43,18 +43,8 @@ const deserializeSound = function (sound, runtime, zip, assetFileName) {
         return Promise.resolve(null);
     }
 
-    let dataFormat = storage.DataFormat.WAV;
-    switch (sound.dataFormat.toLowerCase()) {
-        case "mp3":
-            dataFormat = storage.DataFormat.MP3;
-            break;
-        case "ogg":
-            dataFormat = storage.DataFormat.OGG;
-            break;
-        case "flac":
-            dataFormat = storage.DataFormat.FLAC;
-            break;
-    }
+    const dataFormat = sound.dataFormat.toLowerCase() === 'mp3' ?
+        storage.DataFormat.MP3 : storage.DataFormat.WAV;
     return soundFile.async('uint8array').then(data => storage.createAsset(
         storage.AssetType.Sound,
         dataFormat,

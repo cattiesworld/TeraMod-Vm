@@ -49,7 +49,7 @@ class SecurityManager {
         // Default to false for security
         return Promise.resolve(false);
     }
-    
+
     /**
      * Allows last-minute changing the real URL of the extension that gets loaded.
      * @param {*} extensionURL The URL requested to be loaded.
@@ -154,33 +154,13 @@ class SecurityManager {
     }
 
     /**
-     * pm: Used to prompt the user if they would like to unsandbox a feature in the extension.
-     * @returns {Promise<boolean>|boolean}
-     */
-    canUnsandbox() {
-        return Promise.resolve(false);
-    }
-
-    /**
-     * pm: Used to prompt the user if they would allow screenshotting the camera.
-     * @returns {Promise<boolean>|boolean}
-     */
-    canScreenshotCamera() {
-        return Promise.resolve(true);
-    }
-
-    /**
      * Determine whether an extension is allowed to download a URL with a given name.
      * @param {string} resourceURL The URL to download
-     * @param {string} name The name of the fileAdd commentMore actions
+     * @param {string} name The name of the file
      * @returns {Promise<boolean>|boolean}
      */
     canDownload (resourceURL, name) {
         return Promise.resolve(true);
-    }
-
-    shouldUseLocal(refrenceName) {
-        return Promise.resolve(!confirm(`it seems that the extension ${refrenceName} has been updated, use the up-to-date code?`))
     }
 }
 

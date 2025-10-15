@@ -7,7 +7,7 @@ const Cast = require('../../util/cast');
 const MathUtil = require('../../util/math-util');
 const Clone = require('../../util/clone');
 const log = require('../../util/log');
-const fetchWithTimeout = require('../../util/fetch-with-timeout');
+const {fetchWithTimeout} = require('../../util/fetch-with-timeout');
 
 /**
  * Icon svg to be displayed in the blocks category menu, encoded as a data URI.
@@ -28,12 +28,6 @@ const blockIconURI = 'data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNv
  * @type {string}
  */
 const SERVER_HOST = 'https://synthesis-service.scratch.mit.edu';
-
-/**
- * pm: The url of the extra TTS server.
- * @type {string}
- */
-const PM_SERVER_HOST = 'https://gextapi.derpygamer2142.com';
 
 /**
  * How long to wait in ms before timing out requests to synthesis server.
@@ -73,11 +67,6 @@ const GIANT_ID = 'GIANT';
 const KITTEN_ID = 'KITTEN';
 
 /**
- * An id for one of the voices.
- */
-const GOOGLE_ID = 'GOOGLE';
-
-/**
  * Playback rate for the tenor voice, for cases where we have only a female gender voice.
  */
 const FEMALE_TENOR_RATE = 0.89; // -2 semitones
@@ -113,11 +102,6 @@ const SPANISH_419_ID = 'es-419';
 const SWEDISH_ID = 'sv';
 const TURKISH_ID = 'tr';
 const WELSH_ID = 'cy';
-
-const clampToAudioLimits = (num) => {
-    // these limits are based on the chromium & firefox audio element limits
-    return Math.min(Math.max(num, 0.0625), 16);
-};
 
 /**
  * Class for the text2speech blocks.
@@ -203,17 +187,7 @@ class Scratch3Text2SpeechBlocks {
                 }),
                 gender: 'female',
                 playbackRate: 1.41 // +6 semitones
-            },
-            [GOOGLE_ID]: {
-                name: formatMessage({
-                    id: 'text2speech.google',
-                    default: 'google',
-                    description: 'Name for a voice with ambiguous gender.'
-                }),
-                special: 'google',
-                gender: 'mixed',
-                playbackRate: 1
-            },
+            }
         };
     }
 
@@ -224,7 +198,7 @@ class Scratch3Text2SpeechBlocks {
      *
      * SCRATCH LOCALE
      *      Set by the editor, and used to store the language state in the project.
-     *      Listed in l10n: https://github.com/LLK/scratch-l10n/blob/master/src/supported-locales.js
+     *      Listed in l10n: https://github.com/scratchfoundation/scratch-l10n/blob/master/src/supported-locales.js
      * SUPPORTED LOCALE
      *      A Scratch locale that has a corresponding extension locale.
      * EXTENSION LOCALE
@@ -236,9 +210,6 @@ class Scratch3Text2SpeechBlocks {
      * SPEECH SYNTH LOCALE
      *      A different locale code system, used by our speech synthesis service.
      *      Each extension locale has a speech synth locale.
-     * PENGUINMOD SYNTH LOCALE
-     *      A different locale code system, used by PenguinMod's speech synthesis service.
-     *      Each extension locale has a PenguinMod synth locale, and some may be the same as another locale.
      */
     get LANGUAGE_INFO () {
         return {
@@ -246,175 +217,126 @@ class Scratch3Text2SpeechBlocks {
                 name: 'Arabic',
                 locales: ['ar'],
                 speechSynthLocale: 'arb',
-                penguinmodSynthLocale: 'ar',
                 singleGender: true
             },
             [CHINESE_ID]: {
                 name: 'Chinese (Mandarin)',
                 locales: ['zh-cn', 'zh-tw'],
                 speechSynthLocale: 'cmn-CN',
-                penguinmodSynthLocale: 'zh-cn',
                 singleGender: true
             },
             [DANISH_ID]: {
                 name: 'Danish',
                 locales: ['da'],
-                speechSynthLocale: 'da-DK',
-                penguinmodSynthLocale: 'da',
+                speechSynthLocale: 'da-DK'
             },
             [DUTCH_ID]: {
                 name: 'Dutch',
                 locales: ['nl'],
-                speechSynthLocale: 'nl-NL',
-                penguinmodSynthLocale: 'nl',
+                speechSynthLocale: 'nl-NL'
             },
             [ENGLISH_ID]: {
                 name: 'English',
                 locales: ['en'],
-                speechSynthLocale: 'en-US',
-                penguinmodSynthLocale: 'en',
+                speechSynthLocale: 'en-US'
             },
             [FRENCH_ID]: {
                 name: 'French',
                 locales: ['fr'],
-                speechSynthLocale: 'fr-FR',
-                penguinmodSynthLocale: 'fr',
+                speechSynthLocale: 'fr-FR'
             },
             [GERMAN_ID]: {
                 name: 'German',
                 locales: ['de'],
-                speechSynthLocale: 'de-DE',
-                penguinmodSynthLocale: 'de',
+                speechSynthLocale: 'de-DE'
             },
             [HINDI_ID]: {
                 name: 'Hindi',
                 locales: ['hi'],
                 speechSynthLocale: 'hi-IN',
-                penguinmodSynthLocale: 'hi',
                 singleGender: true
             },
             [ICELANDIC_ID]: {
                 name: 'Icelandic',
                 locales: ['is'],
-                speechSynthLocale: 'is-IS',
-                penguinmodSynthLocale: 'is',
+                speechSynthLocale: 'is-IS'
             },
             [ITALIAN_ID]: {
                 name: 'Italian',
                 locales: ['it'],
-                speechSynthLocale: 'it-IT',
-                penguinmodSynthLocale: 'it',
+                speechSynthLocale: 'it-IT'
             },
             [JAPANESE_ID]: {
                 name: 'Japanese',
                 locales: ['ja', 'ja-hira'],
-                speechSynthLocale: 'ja-JP',
-                penguinmodSynthLocale: 'ja',
+                speechSynthLocale: 'ja-JP'
             },
             [KOREAN_ID]: {
                 name: 'Korean',
                 locales: ['ko'],
                 speechSynthLocale: 'ko-KR',
-                penguinmodSynthLocale: 'ko',
                 singleGender: true
             },
             [NORWEGIAN_ID]: {
                 name: 'Norwegian',
                 locales: ['nb', 'nn'],
                 speechSynthLocale: 'nb-NO',
-                penguinmodSynthLocale: 'no',
                 singleGender: true
             },
             [POLISH_ID]: {
                 name: 'Polish',
                 locales: ['pl'],
-                speechSynthLocale: 'pl-PL',
-                penguinmodSynthLocale: 'pl',
+                speechSynthLocale: 'pl-PL'
             },
             [PORTUGUESE_BR_ID]: {
                 name: 'Portuguese (Brazilian)',
                 locales: ['pt-br'],
-                speechSynthLocale: 'pt-BR',
-                penguinmodSynthLocale: 'pt-br',
+                speechSynthLocale: 'pt-BR'
             },
             [PORTUGUESE_ID]: {
                 name: 'Portuguese (European)',
                 locales: ['pt'],
-                speechSynthLocale: 'pt-PT',
-                penguinmodSynthLocale: 'pt',
+                speechSynthLocale: 'pt-PT'
             },
             [ROMANIAN_ID]: {
                 name: 'Romanian',
                 locales: ['ro'],
                 speechSynthLocale: 'ro-RO',
-                penguinmodSynthLocale: 'ro',
                 singleGender: true
             },
             [RUSSIAN_ID]: {
                 name: 'Russian',
                 locales: ['ru'],
-                speechSynthLocale: 'ru-RU',
-                penguinmodSynthLocale: 'ru',
+                speechSynthLocale: 'ru-RU'
             },
             [SPANISH_ID]: {
                 name: 'Spanish (European)',
                 locales: ['es'],
-                speechSynthLocale: 'es-ES',
-                penguinmodSynthLocale: 'es-es',
+                speechSynthLocale: 'es-ES'
             },
             [SPANISH_419_ID]: {
                 name: 'Spanish (Latin American)',
                 locales: ['es-419'],
-                speechSynthLocale: 'es-US',
-                penguinmodSynthLocale: 'es-us',
+                speechSynthLocale: 'es-US'
             },
             [SWEDISH_ID]: {
                 name: 'Swedish',
                 locales: ['sv'],
                 speechSynthLocale: 'sv-SE',
-                penguinmodSynthLocale: 'sv',
                 singleGender: true
             },
             [TURKISH_ID]: {
                 name: 'Turkish',
                 locales: ['tr'],
                 speechSynthLocale: 'tr-TR',
-                penguinmodSynthLocale: 'tr',
                 singleGender: true
             },
             [WELSH_ID]: {
                 name: 'Welsh',
                 locales: ['cy'],
                 speechSynthLocale: 'cy-GB',
-                penguinmodSynthLocale: 'cy',
                 singleGender: true
             }
-        };
-    }
-
-    /**
-     * An array of IDs that are the voices that will only work on PenguinMod's API.
-     */
-    get PENGUINMOD_VOICES () {
-        return [
-            GOOGLE_ID
-        ];
-    }
-    /**
-     * Key-value pairs for turning a voice ID into the parameter for the PenguinMod API.
-     */
-    get PENGUINMOD_VOICE_MAP () {
-        return {
-            [GOOGLE_ID]: 'google'
-        };
-    }
-    /**
-     * Key-value pairs for getting a nice volume setting for a specific PenguinMod voice.
-     * The volumes are a percentage number like 100 for 100% volume.
-     */
-    get PENGUINMOD_VOICE_VOLUMES () {
-        return {
-            [GOOGLE_ID]: 100
         };
     }
 
@@ -545,21 +467,6 @@ class Scratch3Text2SpeechBlocks {
                             defaultValue: this.getCurrentLanguage()
                         }
                     }
-                },
-                {
-                    opcode: 'setSpeed',
-                    text: formatMessage({
-                        id: 'text2speech.setSpeedBlock',
-                        default: 'set reading speed to [SPEED]%',
-                        description: 'Set the reading speed and pitch for speech synthesis.'
-                    }),
-                    blockType: BlockType.COMMAND,
-                    arguments: {
-                        SPEED: {
-                            type: ArgumentType.NUMBER,
-                            defaultValue: 100
-                        }
-                    }
                 }
             ],
             menus: {
@@ -653,19 +560,6 @@ class Scratch3Text2SpeechBlocks {
         let speechSynthLocale = this.LANGUAGE_INFO[this.DEFAULT_LANGUAGE].speechSynthLocale;
         if (this.LANGUAGE_INFO[this.getCurrentLanguage()]) {
             speechSynthLocale = this.LANGUAGE_INFO[this.getCurrentLanguage()].speechSynthLocale;
-        }
-        return speechSynthLocale;
-    }
-
-    /**
-     * Get the locale code used by the PenguinMod TTS server corresponding to
-     * the current language code set for the extension.
-     * @returns {string} a PenguinMod TTS locale.
-     */
-    _getPenguinModSynthLocale () {
-        let speechSynthLocale = this.LANGUAGE_INFO[this.DEFAULT_LANGUAGE].penguinmodSynthLocale;
-        if (this.LANGUAGE_INFO[this.getCurrentLanguage()]) {
-            speechSynthLocale = this.LANGUAGE_INFO[this.getCurrentLanguage()].penguinmodSynthLocale;
         }
         return speechSynthLocale;
     }
@@ -778,13 +672,6 @@ class Scratch3Text2SpeechBlocks {
         this.setCurrentLanguage(args.LANGUAGE);
     }
 
-    setSpeed (args, util) {
-        const state = this._getState(util.target);
-        const speed = Cast.toNumber(args.SPEED) / 100;
-        // ideally no core blocks should cause errors
-        state.speed = clampToAudioLimits(speed);
-    }
-
     /**
      * Stop all currently playing speech sounds.
      */
@@ -828,42 +715,11 @@ class Scratch3Text2SpeechBlocks {
             locale = this.LANGUAGE_INFO[this.DEFAULT_LANGUAGE].speechSynthLocale;
         }
 
-        let isPenguinMod = false;
-        let penguinModVoice = '';
-        let speechVolume = SPEECH_VOLUME;
-        if (this.PENGUINMOD_VOICES.includes(state.voiceId)) {
-            // This is a PenguinMod voice and has to be handled differently.
-            isPenguinMod = true;
-            locale = this._getPenguinModSynthLocale();
-            penguinModVoice = this.PENGUINMOD_VOICE_MAP[state.voiceId];
-            speechVolume = this.PENGUINMOD_VOICE_VOLUMES[state.voiceId];
-        }
-
         // Build up URL
-        let path = '';
-        if (isPenguinMod) {
-            path = `${PM_SERVER_HOST}/tts`;
-        } else {
-            path = `${SERVER_HOST}/synth`;
-        }
-        if (isPenguinMod) {
-            path += `?lang=${locale}`;
-            path += `&voice=${penguinModVoice}`;
-        } else {
-            path += `?locale=${locale}`;
-        }
+        let path = `${SERVER_HOST}/synth`;
+        path += `?locale=${locale}`;
         path += `&gender=${gender}`;
-        // this textLimit is enforced on the API, no point in increasing it here
-        let textLimit = 128;
-        if (isPenguinMod) {
-            textLimit = 512;
-        }
-        path += `&text=${encodeURIComponent(words.substring(0, textLimit))}`;
-
-        if (typeof state.speed === 'number') {
-            playbackRate *= state.speed;
-            playbackRate = clampToAudioLimits(playbackRate);
-        }
+        path += `&text=${encodeURIComponent(words.substring(0, 128))}`;
 
         // Perform HTTP request to get audio file
         return fetchWithTimeout(path, {}, SERVER_TIMEOUT)
@@ -891,7 +747,7 @@ class Scratch3Text2SpeechBlocks {
                 // Increase the volume
                 const engine = this.runtime.audioEngine;
                 const chain = engine.createEffectChain();
-                chain.set('volume', speechVolume);
+                chain.set('volume', SPEECH_VOLUME);
                 soundPlayer.connect(chain);
 
                 soundPlayer.play();

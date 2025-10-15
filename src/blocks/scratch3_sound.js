@@ -1,7 +1,6 @@
 const MathUtil = require('../util/math-util');
 const Cast = require('../util/cast');
 const Clone = require('../util/clone');
-const getMonitorIdForBlockWithArgs = require('../util/get-monitor-id');
 
 /**
  * Occluded boolean value to make its use more understandable.
@@ -141,9 +140,7 @@ class Scratch3SoundBlocks {
     getPrimitives () {
         return {
             sound_play: this.playSound,
-            sound_playallsounds: this.playSoundAllLolOpAOIUHFoiubea87fge87iufwhef87wye87fn,
             sound_playuntildone: this.playSoundAndWait,
-            sound_stop: this.stopSpecificSound,
             sound_stopallsounds: this.stopAllSounds,
             sound_seteffectto: this.setEffect,
             sound_changeeffectby: this.changeEffect,
@@ -153,14 +150,7 @@ class Scratch3SoundBlocks {
             sound_effects_menu: this.effectsMenu,
             sound_setvolumeto: this.setVolume,
             sound_changevolumeby: this.changeVolume,
-            sound_volume: this.getVolume,
-            sound_isSoundPlaying: this.isSoundPlaying,
-            sound_getEffectValue: this.getEffectValue,
-            sound_getLength: this.getLength,
-            sound_set_stop_fadeout_to: this.setStopFadeout,
-            sound_play_at_seconds: this.playAtSeconds,
-            sound_play_at_seconds_until_done: this.playAtSecondsAndWait,
-            sound_getSoundVolume: this.currentSoundVolume
+            sound_volume: this.getVolume
         };
     }
 
@@ -169,150 +159,8 @@ class Scratch3SoundBlocks {
             sound_volume: {
                 isSpriteSpecific: true,
                 getId: targetId => `${targetId}_volume`
-            },
-            sound_getEffectValue: {
-                isSpriteSpecific: true,
-                getId: (targetId, fields) => getMonitorIdForBlockWithArgs(`${targetId}_soundgetEffectValue`, fields)
-            },
-        };
-    }
-
-    currentSoundVolume (args, util) {
-        
-    }
-
-    playAtSeconds (args, util) {
-        const seconds = Cast.toNumber(args.VALUE);
-        if (seconds < 0) {
-            return;
-        }
-        
-        this._playSoundAtTimePosition({
-            sound: Cast.toString(args.SOUND_MENU),
-            seconds: seconds
-        }, util, STORE_WAITING);
-    }
-    playAtSecondsAndWait (args, util) {
-        // return promise
-        const seconds = Cast.toNumber(args.VALUE);
-        if (seconds < 0) {
-            return;
-        }
-
-        return this._playSoundAtTimePosition({
-            sound: Cast.toString(args.SOUND_MENU),
-            seconds: seconds
-        }, util, STORE_WAITING);
-    }
-
-    _playSoundAtTimePosition ({ sound, seconds }, util, storeWaiting) {
-        const index = this._getSoundIndex(sound, util);
-        if (index >= 0) {
-            const {target} = util;
-            const {sprite} = target;
-            const {soundId} = sprite.sounds[index];
-            if (sprite.soundBank) {
-                if (storeWaiting === STORE_WAITING) {
-                    this._addWaitingSound(target.id, soundId);
-                } else {
-                    this._removeWaitingSound(target.id, soundId);
-                }
-                return sprite.soundBank.playSound(target, soundId, seconds);
             }
-        }
-    }
-
-    setStopFadeout (args, util) {
-        const id = Cast.toString(args.SOUND_MENU);
-        const index = this._getSoundIndex(id, util);
-        if (index < 0) return;
-
-        const target = util.target;
-        const sprite = target.sprite;
-        if (!sprite) return;
-        if (!sprite.sounds) return;
-
-        const { soundId } = sprite.sounds[index];
-
-        const soundBank = sprite.soundBank
-        if (!soundBank) return;
-
-        const decayTime = Cast.toNumber(args.VALUE);
-        if (decayTime <= 0) {
-            soundBank.soundPlayers[soundId].stopFadeDecay = 0;
-            return;
-        }
-
-        soundBank.soundPlayers[soundId].stopFadeDecay = decayTime;
-    }
-
-    getEffectValue (args, util) {
-        const target = util.target;
-
-        const effects = target.soundEffects;
-        if (!effects) return 0;
-
-        const effect = Cast.toString(args.EFFECT).toLowerCase();
-        if (!effects.hasOwnProperty(effect)) return 0;
-        const value = Cast.toNumber(effects[effect]);
-
-        return value;
-    }
-
-    isSoundPlaying (args, util) {
-        const index = this._getSoundIndex(args.SOUND_MENU, util);
-        if (index < 0) return false;
-
-        const target = util.target;
-        const sprite = target.sprite;
-        if (!sprite) return false;
-
-        const { soundId } = sprite.sounds[index];
-
-        const soundBank = sprite.soundBank
-        if (!soundBank) return false;
-        const players = soundBank.soundPlayers;
-        if (!players) return false;
-        if (!players.hasOwnProperty(soundId)) return false;
-
-        return players[soundId].isPlaying == true;
-    }
-
-    getLength (args, util) {
-        const index = this._getSoundIndex(args.SOUND_MENU, util);
-        if (index < 0) return 0;
-
-        const target = util.target;
-        const sprite = target.sprite;
-        if (!sprite) return 0;
-
-        const { soundId } = sprite.sounds[index];
-
-        const soundBank = sprite.soundBank
-        if (!soundBank) return 0;
-        const players = soundBank.soundPlayers;
-        if (!players) return 0;
-        if (!players.hasOwnProperty(soundId)) return 0;
-        const buffer = players[soundId].buffer;
-        if (!buffer) return 0;
-
-        return Cast.toNumber(buffer.duration);
-    }
-
-    stopSpecificSound (args, util) {
-        const index = this._getSoundIndex(args.SOUND_MENU, util);
-        if (index < 0) return;
-
-        const target = util.target;
-        const sprite = target.sprite;
-        if (!sprite) return;
-        
-        const { soundId } = sprite.sounds[index];
-
-        const soundBank = sprite.soundBank
-        if (!soundBank) return;
-
-        soundBank.stop(target, soundId);
+        };
     }
 
     playSound (args, util) {
@@ -397,18 +245,6 @@ class Scratch3SoundBlocks {
         }
     }
 
-    playSoundAllLolOpAOIUHFoiubea87fge87iufwhef87wye87fn (_, util) {
-        const target = util.target;
-        const sprite = target.sprite;
-        if (!sprite) return;
-        for (let i = 0; i < sprite.sounds.length; i++) {
-            const { soundId } = sprite.sounds[i];
-            if (sprite.soundBank) {
-                sprite.soundBank.playSound(target, soundId);
-            }
-        }
-    }
-
     _stopAllSoundsForTarget (target) {
         if (target.sprite.soundBank) {
             target.sprite.soundBank.stopAllSounds(target);
@@ -442,7 +278,7 @@ class Scratch3SoundBlocks {
         const value = Cast.toNumber(args.VALUE);
 
         const soundState = this._getSoundState(util.target);
-        if (!soundState.effects.hasOwnProperty(effect)) return;
+        if (!Object.prototype.hasOwnProperty.call(soundState.effects, effect)) return;
 
         if (change) {
             soundState.effects[effect] += value;
@@ -481,7 +317,7 @@ class Scratch3SoundBlocks {
     _clearEffectsForTarget (target) {
         const soundState = this._getSoundState(target);
         for (const effect in soundState.effects) {
-            if (!soundState.effects.hasOwnProperty(effect)) continue;
+            if (!Object.prototype.hasOwnProperty.call(soundState.effects, effect)) continue;
             soundState.effects[effect] = 0;
         }
         this._syncEffectsForTarget(target);
@@ -497,18 +333,18 @@ class Scratch3SoundBlocks {
 
     setVolume (args, util) {
         const volume = Cast.toNumber(args.VOLUME);
-        return this._updateVolume(volume, util.target);
+        return this._updateVolume(volume, util);
     }
 
     changeVolume (args, util) {
         const volume = Cast.toNumber(args.VOLUME) + util.target.volume;
-        return this._updateVolume(volume, util.target);
+        return this._updateVolume(volume, util);
     }
 
-    _updateVolume (volume, target) {
+    _updateVolume (volume, util) {
         volume = MathUtil.clamp(volume, 0, 100);
-        target.volume = volume;
-        this._syncEffectsForTarget(target);
+        util.target.volume = volume;
+        this._syncEffectsForTarget(util.target);
 
         if (this.runtime.runtimeOptions.miscLimits) {
             // Yield until the next tick.

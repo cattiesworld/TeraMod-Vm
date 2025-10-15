@@ -95,10 +95,8 @@ class ScratchLinkWebSocket {
     }
 
     close () {
-        if (this.isOpen()) {
-            this._ws.close();
-            this._ws = null;
-        }
+        this._ws.close();
+        this._ws = null;
     }
 
     sendMessage (message) {

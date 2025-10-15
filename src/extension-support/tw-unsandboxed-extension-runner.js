@@ -2,6 +2,9 @@ const ScratchCommon = require('./tw-extension-api-common');
 const createScratchX = require('./tw-scratchx-compatibility-layer');
 const AsyncLimiter = require('../util/async-limiter');
 const createTranslate = require('./tw-l10n');
+const staticFetch = require('../util/tw-static-fetch');
+
+/* eslint-disable require-await */
 
 /**
  * Parse a URL object or return null.
@@ -32,7 +35,6 @@ const setupUnsandboxedExtensionAPI = vm => new Promise(resolve => {
     const Scratch = Object.assign({}, global.Scratch || {}, ScratchCommon);
     Scratch.extensions = {
         unsandboxed: true,
-        isPenguinMod: true,
         register
     };
     Scratch.vm = vm;
@@ -76,28 +78,6 @@ const setupUnsandboxedExtensionAPI = vm => new Promise(resolve => {
         return vm.securityManager.canRedirect(parsed.href);
     };
 
-    Scratch.fetch = async (url, options) => {
-        const actualURL = url instanceof Request ? url.url : url;
-        if (!await Scratch.canFetch(actualURL)) {
-            throw new Error(`Permission to fetch ${actualURL} rejected.`);
-        }
-        return fetch(url, options);
-    };
-
-    Scratch.openWindow = async (url, features) => {
-        if (!await Scratch.canOpenWindow(url)) {
-            throw new Error(`Permission to open tab ${url} rejected.`);
-        }
-        return window.open(url, '_blank', features);
-    };
-
-    Scratch.redirect = async url => {
-        if (!await Scratch.canRedirect(url)) {
-            throw new Error(`Permission to redirect to ${url} rejected.`);
-        }
-        location.href = url;
-    };
-    
     Scratch.canRecordAudio = async () => vm.securityManager.canRecordAudio();
 
     Scratch.canRecordVideo = async () => vm.securityManager.canRecordVideo();
@@ -116,10 +96,6 @@ const setupUnsandboxedExtensionAPI = vm => new Promise(resolve => {
         return vm.securityManager.canEmbed(parsed.href);
     };
 
-    Scratch.canUnsandbox = async () => vm.securityManager.canUnsandbox();
-
-    Scratch.canScreenshotCamera = async () => vm.securityManager.canScreenshotCamera();
-
     Scratch.canDownload = async (url, name) => {
         const parsed = parseURL(url);
         if (!parsed) {
@@ -132,7 +108,38 @@ const setupUnsandboxedExtensionAPI = vm => new Promise(resolve => {
         }
         return vm.securityManager.canDownload(url, name);
     };
-    
+
+    Scratch.fetch = async (url, options) => {
+        const actualURL = url instanceof Request ? url.url : url;
+
+        const staticFetchResult = staticFetch(url);
+        if (staticFetchResult) {
+            return staticFetchResult;
+        }
+
+        if (!await Scratch.canFetch(actualURL)) {
+            throw new Error(`Permission to fetch ${actualURL} rejected.`);
+        }
+        return fetch(url, options);
+    };
+
+    Scratch.openWindow = async (url, features) => {
+        if (!await Scratch.canOpenWindow(url)) {
+            throw new Error(`Permission to open tab ${url} rejected.`);
+        }
+        // Use noreferrer to prevent new tab from accessing `window.opener`
+        const baseFeatures = 'noreferrer';
+        features = features ? `${baseFeatures},${features}` : baseFeatures;
+        return window.open(url, '_blank', features);
+    };
+
+    Scratch.redirect = async url => {
+        if (!await Scratch.canRedirect(url)) {
+            throw new Error(`Permission to redirect to ${url} rejected.`);
+        }
+        location.href = url;
+    };
+
     Scratch.download = async (url, name) => {
         if (!await Scratch.canDownload(url, name)) {
             throw new Error(`Permission to download ${name} rejected.`);

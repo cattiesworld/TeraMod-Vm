@@ -2,11 +2,8 @@ const MathUtil = require('../util/math-util');
 const StringUtil = require('../util/string-util');
 const Cast = require('../util/cast');
 const Clone = require('../util/clone');
-const { translateForCamera } = require('../util/pos-math');
 const Target = require('../engine/target');
 const StageLayering = require('../engine/stage-layering');
-const getCostumeUrl = require('../util/get-costume-url');
-const xmlEscape = require('../util/xml-escape');
 
 /**
  * Rendered target: instance of a sprite (clone), or the stage.
@@ -19,8 +16,6 @@ class RenderedTarget extends Target {
      */
     constructor (sprite, runtime) {
         super(runtime, sprite.blocks);
-
-        this.customId = 'pm-rendered-target';
 
         /**
          * Reference to the sprite that this is a render of.
@@ -60,15 +55,7 @@ class RenderedTarget extends Target {
             pixelate: 0,
             mosaic: 0,
             brightness: 0,
-            ghost: 0,
-            red: 0,
-            green: 0,
-            blue: 0,
-            opaque: 0,
-            saturation: 0,
-            // we add 1 since 0x000000 = 0, effects set to 0 will not even be enabled in the shader 
-            // (so we can never tint to black if we didnt add 1)
-            tintColor: 0xffffff + 1 
+            ghost: 0
         };
 
         /**
@@ -85,12 +72,6 @@ class RenderedTarget extends Target {
         this.isStage = false;
 
         /**
-         * Whether this rendered target has been disposed.
-         * @type {boolean}
-         */
-        this.isDisposed = false;
-
-        /**
          * Scratch X coordinate. Currently should range from -240 to 240.
          * @type {Number}
          */
@@ -101,12 +82,6 @@ class RenderedTarget extends Target {
          * @type {number}
          */
         this.y = 0;
-
-        /**
-         * the transform for this sprite.
-         * @type {Array}
-         */
-        this.transform = [0, 0];
 
         /**
          * Scratch direction. Currently should range from -179 to 180.
@@ -131,12 +106,6 @@ class RenderedTarget extends Target {
          * @type {number}
          */
         this.size = 100;
-
-        /**
-         * The stretch percent on each axis
-         * @type {array}
-         */
-        this.stretch = [100, 100];
 
         /**
          * Currently selected costume index.
@@ -199,15 +168,6 @@ class RenderedTarget extends Target {
         this.onTargetVisualChange = null;
 
         this.interpolationData = null;
-
-        this.cameraBound = 'default';
-    }
-    cameraUpdateEvent() {
-        const {direction, scale} = this._getRenderedDirectionAndScale();
-        const translatedPos = this._translatePossitionToCamera();
-        this.renderer.updateDrawablePosition(this.drawableID, translatedPos);
-        this.renderer.updateDrawableDirectionScale(this.drawableID, direction, scale, this.transform);
-        this.renderer.updateDrawableVisible(this.drawableID, this.visible);
     }
 
     /**
@@ -261,27 +221,11 @@ class RenderedTarget extends Target {
     }
 
     /**
-     * pm: Rotation style for "look at"/flipping & spinning.
-     * @type {string}
-     */
-    static get ROTATION_STYLE_LOOK_AT () {
-        return 'look at';
-    }
-
-    /**
      * Rotation style for "left-right"/flipping.
      * @type {string}
      */
     static get ROTATION_STYLE_LEFT_RIGHT () {
         return 'left-right';
-    }
-
-    /**
-     * pm: Rotation style for "up-down"/flipping.
-     * @type {string}
-     */
-    static get ROTATION_STYLE_UP_DOWN () {
-        return 'up-down';
     }
 
     /**
@@ -310,41 +254,25 @@ class RenderedTarget extends Target {
         }
     }
 
-    bindToCamera(screen) {
-        this.cameraBound = screen;
-        this.updateAllDrawableProperties();
-    }
-
-    removeCameraBinding() {
-        this.cameraBound = null;
-        this.updateAllDrawableProperties();
-    }
-
-    _translatePossitionToCamera() {
-        if (!this.cameraBound) return [this.x, this.y];
-        return translateForCamera(this.runtime, this.cameraBound, this.x, this.y);
-    }
-
     /**
      * Set the X and Y coordinates.
      * @param {!number} x New X coordinate, in Scratch coordinates.
      * @param {!number} y New Y coordinate, in Scratch coordinates.
      * @param {?boolean} force Force setting X/Y, in case of dragging
-     * @param {?boolean} ignoreFencing ignores fencing
      */
-    setXY (x, y, force, ignoreFencing) { // used by compiler
+    setXY (x, y, force) { // used by compiler
         if (this.isStage) return;
         if (this.dragging && !force) return;
         const oldX = this.x;
         const oldY = this.y;
         if (this.renderer) {
-            const position = this.runtime.runtimeOptions.fencing && !ignoreFencing ?
+            const position = this.runtime.runtimeOptions.fencing ?
                 this.renderer.getFencedPositionOfDrawable(this.drawableID, [x, y]) :
                 [x, y];
             this.x = position[0];
             this.y = position[1];
 
-            this.renderer.updateDrawablePosition(this.drawableID, this._translatePossitionToCamera());
+            this.renderer.updateDrawablePosition(this.drawableID, position);
             if (this.visible) {
                 this.emitVisualChange();
                 this.runtime.requestRedraw();
@@ -359,30 +287,11 @@ class RenderedTarget extends Target {
         this.runtime.requestTargetsUpdate(this);
     }
 
-    setTransform (transform) {
-        if (!Array.isArray(transform) || transform.length !== 2) 
-            throw new TypeError('Expected an Array of length 2 for the transform input');
-        if (this.isStage) {
-            return;
-        }
-        this.transform = [transform[0], transform[1]];
-        if (this.renderer) {
-            const {direction: renderedDirection, scale} = this._getRenderedDirectionAndScale();
-            this.renderer.updateDrawableDirectionScale(this.drawableID, renderedDirection, scale, this.transform);
-            if (this.visible) {
-                this.emitVisualChange();
-                this.runtime.requestRedraw();
-            }
-        }
-        this.runtime.requestTargetsUpdate(this);
-    }
-
     /**
      * Get the rendered direction and scale, after applying rotation style.
      * @return {object<string, number>} Direction and scale to render.
      */
     _getRenderedDirectionAndScale () {
-        const cameraState = this.runtime.getCamera(this.cameraBound);
         // Default: no changes to `this.direction` or `this.scale`.
         let finalDirection = this.direction;
         let finalScale = [this.size, this.size];
@@ -394,47 +303,8 @@ class RenderedTarget extends Target {
             finalDirection = 90;
             const scaleFlip = (this.direction < 0) ? -1 : 1;
             finalScale = [scaleFlip * this.size, this.size];
-        } else if (this.rotationStyle === RenderedTarget.ROTATION_STYLE_UP_DOWN) {
-            // pm: Force rendered direction to be 90, and flip drawable if needed.
-            finalDirection = 90;
-            const scaleFlip = ((this.direction > 90) || (this.direction < -90)) ? -1 : 1;
-            finalScale = [this.size, scaleFlip * this.size];
-        } else if (this.rotationStyle === RenderedTarget.ROTATION_STYLE_LOOK_AT) {
-            // pm: Flip drawable if we are looking left.
-            const scaleFlip = (this.direction < 0) ? -1 : 1;
-            finalScale = [this.size, scaleFlip * this.size];
         }
-        finalScale[0] *= this.stretch[0] / 100;
-        finalScale[1] *= this.stretch[1] / 100;
-
-        if (this.cameraBound) {
-            finalScale[0] *= cameraState.scale;
-            finalScale[1] *= cameraState.scale;
-            finalDirection -= cameraState.dir;
-        }
-        return {direction: finalDirection, scale: finalScale, stretch: this.stretch};
-    }
-
-    /**
-     * set the stretch of this sprite
-     * @param {number} x the stretch percentage on the x axis
-     * @param {number} y the stretch percentage on the y axis
-     */
-    setStretch (x, y) {
-        if (this.isStage) {
-            return;
-        }
-
-        this.stretch = [x, y];
-        if (this.renderer) {
-            const {direction: renderedDirection, scale} = this._getRenderedDirectionAndScale();
-            this.renderer.updateDrawableDirectionScale(this.drawableID, renderedDirection, scale, this.transform);
-            if (this.visible) {
-                this.emitVisualChange();
-                this.runtime.requestRedraw();
-            }
-        }
-        this.runtime.requestTargetsUpdate(this);
+        return {direction: finalDirection, scale: finalScale};
     }
 
     /**
@@ -449,12 +319,10 @@ class RenderedTarget extends Target {
             return;
         }
         // Keep direction between -179 and +180.
-        this.direction = this.runtime.runtimeOptions.disableDirectionClamping
-            ? direction
-            : MathUtil.wrapClamp(direction, -179, 180);
+        this.direction = MathUtil.wrapClamp(direction, -179, 180);
         if (this.renderer) {
             const {direction: renderedDirection, scale} = this._getRenderedDirectionAndScale();
-            this.renderer.updateDrawableDirectionScale(this.drawableID, renderedDirection, scale, this.transform);
+            this.renderer.updateDrawableDirectionScale(this.drawableID, renderedDirection, scale);
             if (this.visible) {
                 this.emitVisualChange();
                 this.runtime.requestRedraw();
@@ -501,9 +369,20 @@ class RenderedTarget extends Target {
             return;
         }
         if (this.renderer) {
-            this.size = Math.max(0, size);
+            // Clamp to scales relative to costume and stage size.
+            // See original ScratchSprite.as:setSize.
+            const costumeSize = this.renderer.getCurrentSkinSize(this.drawableID);
+            const origW = costumeSize[0];
+            const origH = costumeSize[1];
+            const fencing = this.runtime.runtimeOptions.fencing;
+            const minScale = fencing ? Math.min(1, Math.max(5 / origW, 5 / origH)) : 0;
+            const maxScale = fencing ? Math.min(
+                (1.5 * this.runtime.stageWidth) / origW,
+                (1.5 * this.runtime.stageHeight) / origH
+            ) : Infinity;
+            this.size = MathUtil.clamp(size / 100, minScale, maxScale) * 100;
             const {direction, scale} = this._getRenderedDirectionAndScale();
-            this.renderer.updateDrawableDirectionScale(this.drawableID, direction, scale, this.transform);
+            this.renderer.updateDrawableDirectionScale(this.drawableID, direction, scale);
             if (this.visible) {
                 this.emitVisualChange();
                 this.runtime.requestRedraw();
@@ -522,7 +401,7 @@ class RenderedTarget extends Target {
      * @param {!number} value Numerical magnitude of effect.
      */
     setEffect (effectName, value) { // used by compiler
-        if (!this.effects.hasOwnProperty(effectName)) return;
+        if (!Object.prototype.hasOwnProperty.call(this.effects, effectName)) return;
         this.effects[effectName] = value;
         if (this.renderer) {
             this.renderer.updateDrawableEffect(this.drawableID, effectName, value);
@@ -538,12 +417,12 @@ class RenderedTarget extends Target {
      */
     clearEffects () { // used by compiler
         for (const effectName in this.effects) {
-            if (!this.effects.hasOwnProperty(effectName)) continue;
+            if (!Object.prototype.hasOwnProperty.call(this.effects, effectName)) continue;
             this.effects[effectName] = 0;
         }
         if (this.renderer) {
             for (const effectName in this.effects) {
-                if (!this.effects.hasOwnProperty(effectName)) continue;
+                if (!Object.prototype.hasOwnProperty.call(this.effects, effectName)) continue;
                 this.renderer.updateDrawableEffect(this.drawableID, effectName, 0);
             }
             if (this.visible) {
@@ -705,14 +584,10 @@ class RenderedTarget extends Target {
             this.rotationStyle = RenderedTarget.ROTATION_STYLE_ALL_AROUND;
         } else if (rotationStyle === RenderedTarget.ROTATION_STYLE_LEFT_RIGHT) {
             this.rotationStyle = RenderedTarget.ROTATION_STYLE_LEFT_RIGHT;
-        } else if (rotationStyle === RenderedTarget.ROTATION_STYLE_UP_DOWN) {
-            this.rotationStyle = RenderedTarget.ROTATION_STYLE_UP_DOWN;
-        } else if (rotationStyle === RenderedTarget.ROTATION_STYLE_LOOK_AT) {
-            this.rotationStyle = RenderedTarget.ROTATION_STYLE_LOOK_AT;
         }
         if (this.renderer) {
             const {direction, scale} = this._getRenderedDirectionAndScale();
-            this.renderer.updateDrawableDirectionScale(this.drawableID, direction, scale, this.transform);
+            this.renderer.updateDrawableDirectionScale(this.drawableID, direction, scale);
             if (this.visible) {
                 this.emitVisualChange();
                 this.runtime.requestRedraw();
@@ -800,16 +675,6 @@ class RenderedTarget extends Target {
     getSounds () {
         return this.sprite.sounds;
     }
-    getSoundIndexByName (soundName) {
-        const sounds = this.getSounds();
-        for (let i = 0; i < sounds.length; i++) {
-            if (sounds[i].name === soundName) {
-                return i;
-            }
-        }
-        // if there is no sound by that name, return -1
-        return -1;
-    }
 
     /**
      * Update all drawable properties for this rendered target.
@@ -818,16 +683,15 @@ class RenderedTarget extends Target {
     updateAllDrawableProperties () {
         if (this.renderer) {
             const {direction, scale} = this._getRenderedDirectionAndScale();
-            const translatedPos = this._translatePossitionToCamera();
-            this.renderer.updateDrawablePosition(this.drawableID, translatedPos);
-            this.renderer.updateDrawableDirectionScale(this.drawableID, direction, scale, this.transform);
+            this.renderer.updateDrawablePosition(this.drawableID, [this.x, this.y]);
+            this.renderer.updateDrawableDirectionScale(this.drawableID, direction, scale);
             this.renderer.updateDrawableVisible(this.drawableID, this.visible);
 
             const costume = this.getCostumes()[this.currentCostume];
             this.renderer.updateDrawableSkinId(this.drawableID, costume.skinId);
 
             for (const effectName in this.effects) {
-                if (!this.effects.hasOwnProperty(effectName)) continue;
+                if (!Object.prototype.hasOwnProperty.call(this.effects, effectName)) continue;
                 this.renderer.updateDrawableEffect(this.drawableID, effectName, this.effects[effectName]);
             }
 
@@ -883,10 +747,9 @@ class RenderedTarget extends Target {
     /**
      * Return whether this target is touching the mouse, an edge, or a sprite.
      * @param {string} requestedObject an id for mouse or edge, or a sprite name.
-     * @param {boolean?} unoriginalOnly if true, will use isTouchingSpriteUnoriginals when checking sprites.
      * @return {boolean} True if the sprite is touching the object.
      */
-    isTouchingObject (requestedObject, unoriginalOnly) { // used by compiler
+    isTouchingObject (requestedObject) { // used by compiler
         if (requestedObject === '_mouse_') {
             if (!this.runtime.ioDevices.mouse) return false;
             const mouseX = this.runtime.ioDevices.mouse.getClientX();
@@ -895,12 +758,7 @@ class RenderedTarget extends Target {
         } else if (requestedObject === '_edge_') {
             return this.isTouchingEdge();
         }
-
-        if (unoriginalOnly) {
-            return this.isTouchingSpriteUnoriginals(requestedObject);
-        } else {
-            return this.isTouchingSprite(requestedObject);
-        }
+        return this.isTouchingSprite(requestedObject);
     }
 
     /**
@@ -938,7 +796,7 @@ class RenderedTarget extends Target {
     /**
      * Return whether touching any of a named sprite's clones.
      * @param {string} spriteName Name of the sprite.
-     * @return {boolean} True if touching a clone of the sprite.
+     * @return {boolean} True iff touching a clone of the sprite.
      */
     isTouchingSprite (spriteName) {
         spriteName = Cast.toString(spriteName);
@@ -952,61 +810,6 @@ class RenderedTarget extends Target {
         const drawableCandidates = firstClone.sprite.clones.filter(clone => !clone.dragging)
             .map(clone => clone.drawableID);
         return this.renderer.isTouchingDrawables(
-            this.drawableID, drawableCandidates);
-    }
-
-    /**
-     * Return whether touching a target.
-     * @param {string} targetId ID of the target
-     * @return {boolean} True if touching the target
-     */
-    isTouchingTarget (targetId) {
-        targetId = Cast.toString(targetId);
-        const target = this.runtime.getTargetById(targetId);
-        if (!target || !this.renderer || target.dragging) {
-            return false;
-        }
-        return this.renderer.isTouchingDrawables(
-            this.drawableID, [target.drawableID]);
-    }
-
-    /**
-     * Return whether touching any of a named sprite's unoriginal clones.
-     * @param {string} spriteName Name of the sprite.
-     * @return {boolean} True if touching a clone of the sprite with isOriginal set to false.
-     */
-    isTouchingSpriteUnoriginals (spriteName) {
-        spriteName = Cast.toString(spriteName);
-        const firstClone = this.runtime.getSpriteTargetByName(spriteName);
-        if (!firstClone || !this.renderer) {
-            return false;
-        }
-        // Filter out dragging targets. This means a sprite that is being dragged
-        // can detect other sprites using touching <sprite>, but cannot be detected
-        // by other sprites while it is being dragged. This matches Scratch 2.0 behavior.
-        const drawableCandidates = firstClone.sprite.clones.filter(clone => !clone.dragging && !clone.isOriginal)
-            .map(clone => clone.drawableID);
-        return this.renderer.isTouchingDrawables(
-            this.drawableID, drawableCandidates);
-    }
-
-    /**
-     * Return whether touching any of a named sprite's clones.
-     * @param {string} spriteName Name of the sprite.
-     * @return {boolean} True iff touching a clone of the sprite.
-     */
-    spriteTouchingPoint (spriteName) {
-        spriteName = Cast.toString(spriteName);
-        const firstClone = this.runtime.getSpriteTargetByName(spriteName);
-        if (!firstClone || !this.renderer) {
-            return null;
-        }
-        // Filter out dragging targets. This means a sprite that is being dragged
-        // can detect other sprites using touching <sprite>, but cannot be detected
-        // by other sprites while it is being dragged. This matches Scratch 2.0 behavior.
-        const drawableCandidates = firstClone.sprite.clones.filter(clone => !clone.dragging)
-            .map(clone => clone.drawableID);
-        return this.renderer.getTouchingDrawablesPoint(
             this.drawableID, drawableCandidates);
     }
 
@@ -1171,12 +974,10 @@ class RenderedTarget extends Target {
         newClone.draggable = this.draggable;
         newClone.visible = this.visible;
         newClone.size = this.size;
-        newClone.stretch = this.stretch;
         newClone.currentCostume = this.currentCostume;
         newClone.rotationStyle = this.rotationStyle;
         newClone.effects = Clone.simple(this.effects);
         newClone.variables = this.duplicateVariables();
-        newClone.cameraBound = this.cameraBound;
         newClone._edgeActivatedHatValues = Clone.simple(this._edgeActivatedHatValues);
         newClone.initDrawable(StageLayering.SPRITE_LAYER);
         newClone.updateAllDrawableProperties();
@@ -1198,12 +999,10 @@ class RenderedTarget extends Target {
             newTarget.draggable = this.draggable;
             newTarget.visible = this.visible;
             newTarget.size = this.size;
-            newTarget.stretch = this.stretch;
             newTarget.currentCostume = this.currentCostume;
             newTarget.rotationStyle = this.rotationStyle;
             newTarget.effects = JSON.parse(JSON.stringify(this.effects));
             newTarget.variables = this.duplicateVariables(newTarget.blocks);
-            newTarget.cameraBound = this.cameraBound;
             newTarget.updateAllDrawableProperties();
             return newTarget;
         });
@@ -1230,25 +1029,25 @@ class RenderedTarget extends Target {
      * @param {object} data An object with sprite info data to set.
      */
     postSpriteInfo (data) {
-        const force = data.hasOwnProperty('force') ? data.force : null;
-        const isXChanged = data.hasOwnProperty('x');
-        const isYChanged = data.hasOwnProperty('y');
+        const force = Object.prototype.hasOwnProperty.call(data, 'force') ? data.force : null;
+        const isXChanged = Object.prototype.hasOwnProperty.call(data, 'x');
+        const isYChanged = Object.prototype.hasOwnProperty.call(data, 'y');
         if (isXChanged || isYChanged) {
             this.setXY(isXChanged ? data.x : this.x, isYChanged ? data.y : this.y, force);
         }
-        if (data.hasOwnProperty('direction')) {
+        if (Object.prototype.hasOwnProperty.call(data, 'direction')) {
             this.setDirection(data.direction);
         }
-        if (data.hasOwnProperty('draggable')) {
+        if (Object.prototype.hasOwnProperty.call(data, 'draggable')) {
             this.setDraggable(data.draggable);
         }
-        if (data.hasOwnProperty('rotationStyle')) {
+        if (Object.prototype.hasOwnProperty.call(data, 'rotationStyle')) {
             this.setRotationStyle(data.rotationStyle);
         }
-        if (data.hasOwnProperty('visible')) {
+        if (Object.prototype.hasOwnProperty.call(data, 'visible')) {
             this.setVisible(data.visible);
         }
-        if (data.hasOwnProperty('size')) {
+        if (Object.prototype.hasOwnProperty.call(data, 'size')) {
             this.setSize(data.size);
         }
     }
@@ -1278,7 +1077,6 @@ class RenderedTarget extends Target {
             id: this.id,
             name: this.getName(),
             isStage: this.isStage,
-            isDisposed: this.isDisposed,
             x: this.x,
             y: this.y,
             size: this.size,
@@ -1307,13 +1105,9 @@ class RenderedTarget extends Target {
      * Dispose, destroying any run-time properties.
      */
     dispose () {
-        // pm: remove this event
-        this.runtime.removeListener('CAMERA_CHANGED', this.cameraUpdateEvent);
-
         if (!this.isOriginal) {
             this.runtime.changeCloneCounter(-1);
         }
-        this.isDisposed = true;
         this.runtime.stopForTarget(this);
         this.runtime.removeExecutable(this);
         this.sprite.removeClone(this);
@@ -1326,197 +1120,6 @@ class RenderedTarget extends Target {
                 this.runtime.requestRedraw();
             }
         }
-    }
-
-    // custom type implement so that targets can just be the returned without any prior setup
-    getCostumeType(idx) {
-        const owner = this;
-        const ent = this.getCostumes()[idx];
-        if (!ent) return;
-        ent.customId = 'pm-costume-asset';
-        // ensures that when this type is later reused it correctly expresses any changes
-        Object.defineProperty(ent, '_monitorUpToDate', {
-            get() {
-                if (this._oldName !== this.name) return false;
-                if (this._oldSizeX !== this.size[0]) return false;
-                if (this._oldSizeY !== this.size[1]) return false;
-                if (this._oldAssetId !== this.assetId) return false;
-                if (this._oldIndex !== owner.getCostumeIndexByName(this.name)) return false;
-                return true;
-            }
-        });
-        ent.toReporterContent = function() {
-            this._oldName = this.name;
-            this._oldSizeX = this.size[0];
-            this._oldSizeY = this.size[1];
-            this._oldAssetId = this.assetId;
-            this._oldIndex = owner.getCostumeIndexByName(this.name);
-            const wrap = document.createElement('div');
-            wrap.innerHTML = `<div style="
-                box-sizing: border-box;
-                width: 5rem;
-                height: 5rem;
-                display: flex;
-                flex-direction: column;
-                justify-content: flex-start;
-                font-size: 0.625rem;
-                overflow: hidden;
-                border: 2px solid hsla(0, 0%, 0%, 0.15);
-                border-radius: 0.5rem;
-                color: hsla(225, 15%, 40%, 1);
-                user-select: none;
-            ">
-                <div style="
-                    width: 100%; 
-                    height: 100%; 
-                    display: flex; 
-                    align-items: center; 
-                    justify-content: center;
-                ">
-                    <div style="
-                        position: absolute; 
-                        font-weight: bold; 
-                        left: 0.45rem; 
-                        top: 0.55rem; 
-                        width: 1em; 
-                        height: 1em;
-                        white-space: nowrap;
-                    ">
-                        ${xmlEscape(((owner.getCostumeIndexByName(this.name) +1) || 'X').toString())}
-                    </div>
-                    <img 
-                        style="max-width: 32px; max-height: 32px;" 
-                        src="${xmlEscape(getCostumeUrl(this.asset))}"
-                    ></img>
-                </div>
-                <div style="padding: 0.25rem; text-overflow: ellipsis; white-space: nowrap;">
-                    ${xmlEscape(this.name)}
-                    <div style="font-size: 0.5rem; margin-top: 0.125rem">
-                        ${xmlEscape(Math.round(this.size[0]).toString())} x ${xmlEscape(Math.round(this.size[1]).toString())}
-                    </div>
-                </div>
-            </div>`;
-            return wrap;
-        };
-        return ent;
-    }
-    getSoundType(idx) {
-        const owner = this;
-        const ent = this.getSounds()[idx];
-        if (!ent) return;
-        ent.customId = 'pm-sound-asset';
-        Object.defineProperty(ent, '_monitorUpToDate', {
-            get() {
-                if (this._oldName !== this.name) return false;
-                if (this._oldAssetId !== this.assetId) return false;
-                if (this._oldSampleRate !== this.rate) return false;
-                if (this._oldSampleCount !== this.sampleCount) return false;
-                if (this._oldIndex !== owner.getSoundIndexByName(this.name)) return false;
-                return true;
-            }
-        });
-        ent.toReporterContent = function() {
-            this._oldName = this.name;
-            this._oldAssetId = this.assetId;
-            this._oldSampleRate = this.rate;
-            this._oldSampleCount = this.sampleCount;
-            this._oldIndex = owner.getSoundIndexByName(this.name);
-            const wrap = document.createElement('div');
-            wrap.innerHTML = `<div style="
-                box-sizing: border-box;
-                width: 5rem;
-                height: 5rem;
-                display: flex;
-                flex-direction: column;
-                justify-content: flex-start;
-                font-size: 0.625rem;
-                overflow: hidden;
-                border: 2px solid hsla(0, 0%, 0%, 0.15);
-                border-radius: 0.5rem;
-                color: hsla(225, 15%, 40%, 1);
-                user-select: none;
-            ">
-                <div style="
-                    width: 100%; 
-                    height: 100%; 
-                    display: flex; 
-                    align-items: center; 
-                    justify-content: center;
-                ">
-                    <div style="
-                        position: absolute; 
-                        font-weight: bold; 
-                        left: 0.45rem; 
-                        top: 0.55rem; 
-                        width: 1em; 
-                        height: 1em;
-                        white-space: nowrap;
-                    ">
-                        ${xmlEscape(((owner.getSoundIndexByName(this.name) +1) || 'X').toString())}
-                    </div>
-                    <img 
-                        style="max-width: 32px; max-height: 32px;" 
-                        src="static/assets/63e5827c1506216bd7c9927a4e5eb558.svg"
-                    ></img>
-                </div>
-                <div style="padding: 0.25rem; text-overflow: ellipsis; white-space: nowrap;">
-                    ${xmlEscape(this.name)}
-                    <div style="font-size: 0.5rem; margin-top: 0.125rem">
-                        ${xmlEscape((this.sampleCount / this.rate).toFixed(2))}
-                    </div>
-                </div>
-            </div>`;
-            return wrap;
-        };
-        return ent;
-    }
-
-    get _monitorUpToDate() {
-        if (this._oldName !== this.getName()) return false;
-        if (this._oldCostumeIdx !== this.currentCostume) return false;
-        if (this._oldCostumeAssetId !== this.getCurrentCostume().assetId) return false;
-        return true;
-    }
-    toString() { return this.getName(); }
-    toReporterContent() {
-        this._oldName = this.getName();
-        this._oldCostumeIdx = this.currentCostume;
-        this._oldCostumeAssetId = this.getCurrentCostume().assetId;
-        const wrap = document.createElement('div');
-        wrap.innerHTML = `<div style="
-            box-sizing: border-box;
-            width: 4rem;
-            height: 4rem;
-            display: flex;
-            flex-direction: column;
-            justify-content: flex-start;
-            font-size: 0.625rem;
-            overflow: hidden;
-            cursor: pointer;
-            border: 2px solid hsla(0, 0%, 0%, 0.15);
-            border-radius: 0.5rem;
-            color: hsla(225, 15%, 40%, 1);
-            user-select: none;
-        ">
-            <div style="
-                width: 100%; 
-                height: 100%; 
-                display: flex; 
-                align-items: center; 
-                justify-content: center;
-            ">
-                <img 
-                    style="max-width: 32px; max-height: 32px;" 
-                    src="${xmlEscape(getCostumeUrl(this.getCurrentCostume().asset))}"
-                ></img>
-            </div>
-            <div style="padding: 0.25rem; text-overflow: ellipsis; white-space: nowrap;">
-                ${xmlEscape(this.getName())}
-            </div>
-        </div>`;
-        wrap.onclick = () => 
-            this.runtime.vm.setEditingTarget(this.id);
-        return wrap;
     }
 }
 

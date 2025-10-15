@@ -9,7 +9,6 @@ const BlocksRuntimeCache = require('./blocks-runtime-cache');
 const log = require('../util/log');
 const Variable = require('./variable');
 const getMonitorIdForBlockWithArgs = require('../util/get-monitor-id');
-const StringUtil = require('../util/string-util');
 
 /**
  * @fileoverview
@@ -89,7 +88,7 @@ class Blocks {
              * @type {object.<string, object>}
              */
             compiledScripts: {},
-
+            
             /**
              * tw: A cache of procedure code opcodes to a parsed intermediate representation
              * @type {object.<string, object>}
@@ -120,7 +119,7 @@ class Blocks {
      * @returns {{success: boolean; value: any}|null} Cached success or error, or null if there is no cached value.
      */
     getCachedCompileResult (blockId) {
-        if (this._cache.compiledScripts.hasOwnProperty(blockId)) {
+        if (Object.prototype.hasOwnProperty.call(this._cache.compiledScripts, blockId)) {
             return this._cache.compiledScripts[blockId];
         }
         return null;
@@ -285,9 +284,9 @@ class Blocks {
         }
 
         for (const id in this._blocks) {
-            if (!this._blocks.hasOwnProperty(id)) continue;
+            if (!Object.prototype.hasOwnProperty.call(this._blocks, id)) continue;
             const block = this._blocks[id];
-            if (block.opcode === 'procedures_definition' || block.opcode === 'procedures_definition_return') {
+            if (block.opcode === 'procedures_definition') {
                 // tw: make sure that populateProcedureCache is kept up to date with this method
                 const internal = this._getCustomBlockInternal(block);
                 if (internal && internal.mutation.proccode === name) {
@@ -322,7 +321,7 @@ class Blocks {
         }
 
         for (const id in this._blocks) {
-            if (!this._blocks.hasOwnProperty(id)) continue;
+            if (!Object.prototype.hasOwnProperty.call(this._blocks, id)) continue;
             const block = this._blocks[id];
             if (block.opcode === 'procedures_prototype' &&
                 block.mutation.proccode === name) {
@@ -355,7 +354,7 @@ class Blocks {
             return;
         }
         for (const id in this._blocks) {
-            if (!this._blocks.hasOwnProperty(id)) continue;
+            if (!Object.prototype.hasOwnProperty.call(this._blocks, id)) continue;
             const block = this._blocks[id];
 
             if (block.opcode === 'procedures_prototype') {
@@ -369,7 +368,7 @@ class Blocks {
                 continue;
             }
 
-            if (block.opcode === 'procedures_definition' || block.opcode === 'procedures_definition_return') {
+            if (block.opcode === 'procedures_definition') {
                 const internal = this._getCustomBlockInternal(block);
                 if (internal) {
                     const name = internal.mutation.proccode;
@@ -456,21 +455,13 @@ class Blocks {
         case 'delete':
             // Don't accept delete events for missing blocks,
             // or shadow blocks being obscured.
-            if (!this._blocks.hasOwnProperty(e.blockId) ||
+            if (!Object.prototype.hasOwnProperty.call(this._blocks, e.blockId) ||
                 this._blocks[e.blockId].shadow) {
                 return;
             }
-            // If this block is the initial block of a script, inform any runtime to forget about glows
-            // as well as force end the script (if in compiler)
+            // Inform any runtime to forget about glows on this script.
             if (this._blocks[e.blockId].topLevel) {
                 this.runtime.quietGlow(e.blockId);
-                if (this.runtime.compilerOptions.enabled) setTimeout(() => {
-                    // slighlty delay script end to handle tab switching vs real block deletion
-                    if (!this._blocks[e.blockId]) {
-                        const thread = this.runtime.threads.find(t => t.getId() === `${editingTarget.id}&${e.blockId}`);
-                        if (thread) this.runtime._stopThread(thread);
-                    }
-                }, 100);
             }
             this.deleteBlock(e.blockId);
             break;
@@ -483,11 +474,9 @@ class Blocks {
             // into a state where a local var was requested for the stage,
             // create a stage (global) var after checking for name conflicts
             // on all the sprites.
-                
             if (e.isLocal && editingTarget && !editingTarget.isStage && !e.isCloud) {
                 if (!editingTarget.lookupVariableById(e.varId)) {
                     editingTarget.createVariable(e.varId, e.varName, e.varType);
-                    this.runtime.emit('variableCreate', e.varType, e.varId, e.varName, e.isCloud);
                     this.emitProjectChanged();
                 }
             } else {
@@ -503,12 +492,11 @@ class Blocks {
                     }
                 }
                 stage.createVariable(e.varId, e.varName, e.varType, e.isCloud);
-                this.runtime.emit('variableCreate', e.varType, e.varId, e.varName, e.isCloud);
                 this.emitProjectChanged();
             }
             break;
         case 'var_rename':
-            if (editingTarget && editingTarget.variables.hasOwnProperty(e.varId)) {
+            if (editingTarget && Object.prototype.hasOwnProperty.call(editingTarget.variables, e.varId)) {
                 // This is a local variable, rename on the current target
                 editingTarget.renameVariable(e.varId, e.newName);
                 // Update all the blocks on the current target that use
@@ -524,14 +512,12 @@ class Blocks {
                     currTarget.blocks.updateBlocksAfterVarRename(e.varId, e.newName);
                 }
             }
-            this.runtime.emit('variableChange', e.varType, e.varId, e.newName, e.oldName);
             this.emitProjectChanged();
             break;
         case 'var_delete': {
             this.resetCache(); // tw: more aggressive cache resetting
-            const target = (editingTarget && editingTarget.variables.hasOwnProperty(e.varId)) ?
+            const target = (editingTarget && Object.prototype.hasOwnProperty.call(editingTarget.variables, e.varId)) ?
                 editingTarget : stage;
-            this.runtime.emit('variableDelete', e.varType, e.varId);
             target.deleteVariable(e.varId);
             this.emitProjectChanged();
             break;
@@ -561,20 +547,21 @@ class Blocks {
             this.resetCache(); // tw: comments can affect compilation
             if (this.runtime.getEditingTarget()) {
                 const currTarget = this.runtime.getEditingTarget();
-                if (!currTarget.comments.hasOwnProperty(e.commentId)) {
+                if (!Object.prototype.hasOwnProperty.call(currTarget.comments, e.commentId)) {
                     log.warn(`Cannot change comment with id ${e.commentId} because it does not exist.`);
                     return;
                 }
                 const comment = currTarget.comments[e.commentId];
                 const change = e.newContents_;
-                if (change.hasOwnProperty('minimized')) {
+                if (Object.prototype.hasOwnProperty.call(change, 'minimized')) {
                     comment.minimized = change.minimized;
                 }
-                if (change.hasOwnProperty('width') && change.hasOwnProperty('height')){
+                if (Object.prototype.hasOwnProperty.call(change, 'width') &&
+                    Object.prototype.hasOwnProperty.call(change, 'height')) {
                     comment.width = change.width;
                     comment.height = change.height;
                 }
-                if (change.hasOwnProperty('text')) {
+                if (Object.prototype.hasOwnProperty.call(change, 'text')) {
                     comment.text = change.text;
                 }
                 this.emitProjectChanged();
@@ -583,7 +570,7 @@ class Blocks {
         case 'comment_move':
             if (this.runtime.getEditingTarget()) {
                 const currTarget = this.runtime.getEditingTarget();
-                if (currTarget && !currTarget.comments.hasOwnProperty(e.commentId)) {
+                if (currTarget && !Object.prototype.hasOwnProperty.call(currTarget.comments, e.commentId)) {
                     log.warn(`Cannot change comment with id ${e.commentId} because it does not exist.`);
                     return;
                 }
@@ -599,7 +586,7 @@ class Blocks {
             this.resetCache(); // tw: comments can affect compilation
             if (this.runtime.getEditingTarget()) {
                 const currTarget = this.runtime.getEditingTarget();
-                if (!currTarget.comments.hasOwnProperty(e.commentId)) {
+                if (!Object.prototype.hasOwnProperty.call(currTarget.comments, e.commentId)) {
                     // If we're in this state, we have probably received
                     // a delete event from a workspace that we switched from
                     // (e.g. a delete event for a comment on sprite a's workspace
@@ -656,7 +643,7 @@ class Blocks {
     createBlock (block) {
         // Does the block already exist?
         // Could happen, e.g., for an unobscured shadow.
-        if (this._blocks.hasOwnProperty(block.id)) {
+        if (Object.prototype.hasOwnProperty.call(this._blocks, block.id)) {
             return;
         }
         // Create new block.
@@ -686,10 +673,20 @@ class Blocks {
         if (typeof block === 'undefined') return;
         switch (args.element) {
         case 'field':
+            // TODO when the field of a monitored block changes,
+            // update the checkbox in the flyout based on whether
+            // a monitor for that current combination of selected parameters exists
+            // e.g.
+            // 1. check (current [v year])
+            // 2. switch dropdown in flyout block to (current [v minute])
+            // 3. the checkbox should become unchecked if we're not already
+            //    monitoring current minute
+
+
             // Update block value
             if (!block.fields[args.name]) return;
-            const field = block.fields[args.name];
-            if (typeof field.variableType === 'string') {
+            if (args.name === 'VARIABLE' || args.name === 'LIST' ||
+                args.name === 'BROADCAST_OPTION') {
                 // Get variable name using the id in args.value.
                 const variable = this.runtime.getEditingTarget().lookupVariableById(args.value);
                 if (variable) {
@@ -718,30 +715,6 @@ class Blocks {
                         id: flyoutBlock.id,
                         params: this._getBlockParams(flyoutBlock)
                     }));
-                }
-            }
-
-            // update the checkbox state if monitoring
-            // TODO theres probably a better way to check for ScratchBlocks here
-            // but it fixes the problem so whatever
-            if (typeof ScratchBlocks === 'object') {
-                // check if monitoring
-                const monitorState = this.runtime.getMonitorState();
-                const shouldCheck = (
-                    monitorState.get(`${args.id}_${args.value}`) !== undefined ||
-                    monitorState.get(`${args.id}_${args.value.toLowerCase()}`) !== undefined
-                );
-
-                const workspace = ScratchBlocks.mainWorkspace;
-                const flyout = workspace.isFlyout ? workspace : workspace.getFlyout();
-                const checkbox = flyout.checkboxes_[args.id];
-                if (checkbox) {
-                    checkbox.clicked = shouldCheck;
-                    if (shouldCheck) {
-                        ScratchBlocks.utils.addClass(checkbox.svgRoot, 'checked');
-                    } else {
-                        ScratchBlocks.utils.removeClass(checkbox.svgRoot, 'checked');
-                    }
                 }
             }
             break;
@@ -777,36 +750,15 @@ class Blocks {
 
             // Variable blocks may be sprite specific depending on the owner of the variable
             let isSpriteLocalVariable = false;
-            const stage = this.runtime.getTargetForStage();
-            if (stage) {
-                if (block.opcode === 'data_variable') {
-                    isSpriteLocalVariable = !(stage.variables[block.fields.VARIABLE.id]);
-                } else if (block.opcode === 'data_listcontents') {
-                    isSpriteLocalVariable = !(stage.variables[block.fields.LIST.id]);
-                } else {
-                    isSpriteLocalVariable = Object.values(block.fields).some(field => {
-                        if (field.variableType === undefined) return false;
-                        else return ("id" in field) && !(stage.variables[field.id]);
-                    });
-                }
+            if (block.opcode === 'data_variable') {
+                isSpriteLocalVariable = !(this.runtime.getTargetForStage().variables[block.fields.VARIABLE.id]);
+            } else if (block.opcode === 'data_listcontents') {
+                isSpriteLocalVariable = !(this.runtime.getTargetForStage().variables[block.fields.LIST.id]);
             }
 
-            // Provides an API for extensions to set reporters of themselves (that can be monitored)
-            // as sprite-specific
-            var extension_sprite_specific = ((info) => {
-                if (info == undefined) return false;
-                const block_info = info.blocks.find(_block => {
-                    return _block.info.opcode === StringUtil.splitFirst(block.opcode, "_")[1];
-                });
-                return block_info?.info?.isSpriteSpecific ?? false;
-            })(vm.runtime._blockInfo.find(a => a.id === StringUtil.splitFirst(block.opcode, "_")[0]));
-
-
             const isSpriteSpecific = isSpriteLocalVariable ||
-                (this.runtime.monitorBlockInfo.hasOwnProperty(block.opcode) &&
-                this.runtime.monitorBlockInfo[block.opcode]?.isSpriteSpecific) ||
-                extension_sprite_specific;
-
+                (Object.prototype.hasOwnProperty.call(this.runtime.monitorBlockInfo, block.opcode) &&
+                this.runtime.monitorBlockInfo[block.opcode].isSpriteSpecific);
             if (isSpriteSpecific) {
                 // If creating a new sprite specific monitor, the only possible target is
                 // the current editing one b/c you cannot dynamically create monitors.
@@ -829,9 +781,7 @@ class Blocks {
                         params: this._getBlockParams(block),
                         // @todo(vm#565) for numerical values with decimals, some countries use comma
                         value: '',
-                        mode: block.opcode === 'data_listcontents' ? 'list' : 'default',
-                        variableType: Object.values(block.fields)[0]?.variableType,
-                        variableId: Object.values(block.fields)[0]?.id
+                        mode: block.opcode === 'data_listcontents' ? 'list' : 'default'
                     }));
                 }
             }
@@ -849,7 +799,7 @@ class Blocks {
      * @param {!object} e Blockly move event to be processed
      */
     moveBlock (e) {
-        if (!this._blocks.hasOwnProperty(e.id)) {
+        if (!Object.prototype.hasOwnProperty.call(this._blocks, e.id)) {
             return;
         }
 
@@ -897,7 +847,7 @@ class Blocks {
                 // Moved to the new parent's input.
                 // Don't obscure the shadow block.
                 let oldShadow = null;
-                if (this._blocks[e.newParent].inputs.hasOwnProperty(e.newInput)) {
+                if (Object.prototype.hasOwnProperty.call(this._blocks[e.newParent].inputs, e.newInput)) {
                     oldShadow = this._blocks[e.newParent].inputs[e.newInput].shadow;
                 }
 
@@ -949,9 +899,10 @@ class Blocks {
      * Block management: delete blocks and their associated scripts. Does nothing if a block
      * with the given ID does not exist.
      * @param {!string} blockId Id of block to delete
-     * @param {boolean} preserveStack If we should reconect the bottom blocks to the top block
      */
-    deleteBlock (blockId, preserveStack) {
+    deleteBlock (blockId) {
+        // @todo In runtime, stop threads running on this script.
+
         // Get block
         const block = this._blocks[blockId];
         if (!block) {
@@ -960,20 +911,8 @@ class Blocks {
         }
 
         // Delete children
-        if (block.next !== null && !preserveStack) {
+        if (block.next !== null) {
             this.deleteBlock(block.next);
-        }
-
-        if (preserveStack) {
-            const parent = this._blocks[block.parent];
-            const next = this._blocks[block.next];
-            const input = parent?.inputs
-                ? [...Object.entries(parent.inputs)]
-                    .find(ent => ent[1].block === blockId)?.[1]
-                : null;
-            if (parent && !input) parent.next = block.next;
-            if (next) next.parent = block.parent;
-            if (next && input) input.block = block.next;
         }
 
         // Delete inputs (including branches)
@@ -989,27 +928,22 @@ class Blocks {
             }
         }
 
-        if (!preserveStack) {
-            // Delete any script starting with this block.
-            this._deleteScript(blockId);
-        }
-        const i = this._scripts.indexOf(blockId);
-        if (preserveStack && i > -1) {
-            const next = this._blocks[block.next];
-            if (next) {
-                this._scripts.push(next.id);
-                next.topLevel = true;
-                next.x = block.x;
-                next.y = block.y;
-            }
-            this._scripts.splice(i, 1);
-        }
+        // Delete any script starting with this block.
+        this._deleteScript(blockId);
 
         // Delete block itself.
         delete this._blocks[blockId];
 
         this.resetCache();
         this.emitProjectChanged();
+    }
+
+    /**
+     * Delete all blocks and their associated scripts.
+     */
+    deleteAllBlocks () {
+        const blockIds = Object.keys(this._blocks);
+        blockIds.forEach(blockId => this.deleteBlock(blockId));
     }
 
     /**
@@ -1106,28 +1040,17 @@ class Blocks {
      * 'backdrop'.
      */
     updateAssetName (oldName, newName, assetType) {
-        let target = this.runtime.getEditingTarget();
         let getAssetField;
-        let eventName;
-        switch (assetType) {
-          case 'costume':
-            eventName = 'COSTUME_RENAMED';
+        if (assetType === 'costume') {
             getAssetField = this._getCostumeField.bind(this);
-            break;
-          case 'backdrop':
-            target = this.runtime.getTargetForStage();
-            eventName = 'COSTUME_RENAMED';
-            getAssetField = this._getBackdropField.bind(this);
-            break;
-          case 'sound':
-            eventName = 'SOUND_RENAMED';
+        } else if (assetType === 'sound') {
             getAssetField = this._getSoundField.bind(this);
-            break;
-          case 'sprite':
-            eventName = 'SPRITE_RENAMED';
+        } else if (assetType === 'backdrop') {
+            getAssetField = this._getBackdropField.bind(this);
+        } else if (assetType === 'sprite') {
             getAssetField = this._getSpriteField.bind(this);
-            break;
-          default: return
+        } else {
+            return;
         }
         const blocks = this._blocks;
         for (const blockId in blocks) {
@@ -1137,11 +1060,6 @@ class Blocks {
             }
         }
         this.resetCache();
-        this.runtime.emit(
-          eventName,
-          { "old": oldName, "new": newName },
-          target
-        );
     }
 
     /**
@@ -1180,7 +1098,7 @@ class Blocks {
      */
     _getCostumeField (blockId) {
         const block = this.getBlock(blockId);
-        if (block && block.fields.hasOwnProperty('COSTUME')) {
+        if (block && Object.prototype.hasOwnProperty.call(block.fields, 'COSTUME')) {
             return block.fields.COSTUME;
         }
         return null;
@@ -1195,7 +1113,7 @@ class Blocks {
      */
     _getSoundField (blockId) {
         const block = this.getBlock(blockId);
-        if (block && block.fields.hasOwnProperty('SOUND_MENU')) {
+        if (block && Object.prototype.hasOwnProperty.call(block.fields, 'SOUND_MENU')) {
             return block.fields.SOUND_MENU;
         }
         return null;
@@ -1210,7 +1128,7 @@ class Blocks {
      */
     _getBackdropField (blockId) {
         const block = this.getBlock(blockId);
-        if (block && block.fields.hasOwnProperty('BACKDROP')) {
+        if (block && Object.prototype.hasOwnProperty.call(block.fields, 'BACKDROP')) {
             return block.fields.BACKDROP;
         }
         return null;
@@ -1232,7 +1150,7 @@ class Blocks {
             'DISTANCETOMENU', 'TOUCHINGOBJECTMENU', 'CLONE_OPTION'];
         for (let i = 0; i < spriteMenuNames.length; i++) {
             const menuName = spriteMenuNames[i];
-            if (block.fields.hasOwnProperty(menuName)) {
+            if (Object.prototype.hasOwnProperty.call(block.fields, menuName)) {
                 return block.fields[menuName];
             }
         }
@@ -1275,7 +1193,7 @@ class Blocks {
         const commentId = block.comment;
         if (commentId) {
             if (comments) {
-                if (comments.hasOwnProperty(commentId)) {
+                if (Object.prototype.hasOwnProperty.call(comments, commentId)) {
                     xmlString += comments[commentId].toXML();
                 } else {
                     log.warn(`Could not find comment with id: ${commentId} in provided comment descriptions.`);
@@ -1290,7 +1208,7 @@ class Blocks {
         }
         // Add any inputs on this block.
         for (const input in block.inputs) {
-            if (!block.inputs.hasOwnProperty(input)) continue;
+            if (!Object.prototype.hasOwnProperty.call(block.inputs, input)) continue;
             const blockInput = block.inputs[input];
             // Only encode a value tag if the value input is occupied.
             if (blockInput.block || blockInput.shadow) {
@@ -1307,7 +1225,7 @@ class Blocks {
         }
         // Add any fields on this block.
         for (const field in block.fields) {
-            if (!block.fields.hasOwnProperty(field)) continue;
+            if (!Object.prototype.hasOwnProperty.call(block.fields, field)) continue;
             const blockField = block.fields[field];
             xmlString += `<field name="${xmlEscape(blockField.name)}"`;
             const fieldId = blockField.id;
@@ -1338,7 +1256,6 @@ class Blocks {
      * @return {string} XML string representing a mutation.
      */
     mutationToXML (mutation) {
-        if (typeof mutation === 'string') return xmlEscape(mutation)
         let mutationString = `<${mutation.tagName}`;
         for (const prop in mutation) {
             if (prop === 'children' || prop === 'tagName') continue;
@@ -1413,8 +1330,6 @@ class Blocks {
         // Update `topLevel` property on the top block.
         if (this._blocks[topBlockId]) this._blocks[topBlockId].topLevel = false;
     }
-    XMLToBlock = adapter;
-    XMLToMutation = mutationAdapter;
 }
 
 /**

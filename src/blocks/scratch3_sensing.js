@@ -1,8 +1,6 @@
 const Cast = require('../util/cast');
 const Timer = require('../util/timer');
-const MathUtil = require('../util/math-util');
 const getMonitorIdForBlockWithArgs = require('../util/get-monitor-id');
-const { validateRegex } = require('../util/json-block-utilities');
 
 class Scratch3SensingBlocks {
     constructor (runtime) {
@@ -37,12 +35,6 @@ class Scratch3SensingBlocks {
         this._cachedLoudnessTimestamp = 0;
 
         /**
-         * The list of loudness values to determine the average.
-         * @type {!Array}
-         */
-        this._loudnessList = [];
-
-        /**
          * The list of queued questions and respective `resolve` callbacks.
          * @type {!Array}
          */
@@ -61,8 +53,6 @@ class Scratch3SensingBlocks {
      */
     getPrimitives () {
         return {
-            sensing_objecttouchingobject: this.objectTouchingObject,
-            sensing_objecttouchingclonesprite: this.objectTouchingCloneOfSprite,
             sensing_touchingobject: this.touchingObject,
             sensing_touchingcolor: this.touchingColor,
             sensing_coloristouchingcolor: this.colorTouchingColor,
@@ -82,211 +72,8 @@ class Scratch3SensingBlocks {
             sensing_askandwait: this.askAndWait,
             sensing_answer: this.getAnswer,
             sensing_username: this.getUsername,
-            sensing_loggedin: this.getLoggedIn,
-            sensing_userid: () => {}, // legacy no-op block
-            sensing_regextest: this.regextest,
-            sensing_thing_is_number: this.thing_is_number,
-            sensing_thing_has_number: this.thing_has_number,
-            sensing_mobile: this.mobile,
-            sensing_thing_is_text: this.thing_is_text,
-            sensing_getspritewithattrib: this.getspritewithattrib,
-            sensing_directionTo: this.getDirectionToFrom,
-            sensing_distanceTo: this.getDistanceToFrom,
-            sensing_isUpperCase: this.isCharecterUppercase,
-            sensing_mouseclicked: this.mouseClicked,
-            sensing_keyhit: this.keyHit,
-            sensing_mousescrolling: this.mouseScrolling,
-            sensing_fingerdown: this.fingerDown,
-            sensing_fingertapped: this.fingerTapped,
-            sensing_fingerx: this.getFingerX,
-            sensing_fingery: this.getFingerY,
-            sensing_setclipboard: this.setClipboard,
-            sensing_getclipboard: this.getClipboard,
-            sensing_getdragmode: this.getDragMode,
-            sensing_getoperatingsystem: this.getOS,
-            sensing_getbrowser: this.getBrowser,
-            sensing_geturl: this.getUrl,
-            sensing_getxyoftouchingsprite: this.getXYOfTouchingSprite
+            sensing_userid: () => {} // legacy no-op block
         };
-    }
-
-    getOS () {
-        if (!('userAgent' in navigator)) return 'Unknown';
-        const agent = navigator.userAgent;
-        if (agent.includes('Windows')) {
-            return 'Windows';
-        }
-        if (agent.includes('Android')) {
-            return 'Android';
-        }
-        if (agent.includes('iPad') || agent.includes('iPod') || agent.includes('iPhone')) {
-            return 'iOS';
-        }
-        if (agent.includes('Linux')) {
-            return 'Linux';
-        }
-        if (agent.includes('CrOS')) {
-            return 'ChromeOS';
-        }
-        if (agent.includes('Mac OS')) {
-            return 'MacOS';
-        }
-        return 'Unknown';
-    }
-    getBrowser () {
-        if (!('userAgent' in navigator)) return 'Unknown';
-        const agent = navigator.userAgent;
-        if ('userAgentData' in navigator) {
-            const agentData = JSON.stringify(navigator.userAgentData.brands);
-            if (agentData.includes('Google Chrome')) {
-                return 'Chrome';
-            }
-            if (agentData.includes('Opera')) {
-                return 'Opera';
-            }
-            if (agentData.includes('Microsoft Edge')) {
-                return 'Edge';
-            }
-        }
-        if (agent.includes('Chrome')) {
-            return 'Chrome';
-        }
-        if (agent.includes('Firefox')) {
-            return 'Firefox';
-        }
-        // PenguinMod cannot be loaded in IE 11 (the last supported version)
-        // if (agent.includes('MSIE') || agent.includes('rv:')) {
-        //     return 'Internet Explorer';
-        // }
-        if (agent.includes('Safari')) {
-            return 'Safari';
-        }
-        return 'Unknown';
-    }
-    getUrl () {
-        if (!('href' in location)) return '';
-        return location.href;
-    }
-
-    setClipboard (args) {
-        const text = Cast.toString(args.ITEM);
-        if (!navigator) return;
-        if (('clipboard' in navigator) && ('writeText' in navigator.clipboard)) {
-            navigator.clipboard.writeText(text);
-        }
-    }
-    getClipboard () {
-        if (!navigator) return '';
-        if (('clipboard' in navigator) && ('readText' in navigator.clipboard)) {
-            return navigator.clipboard.readText();
-        } else {
-            return '';
-        }
-    }
-
-    getDragMode (_, util) {
-        return util.target.draggable;
-    }
-
-    mouseClicked (_, util) {
-        return util.ioQuery('mouse', 'getIsClicked');
-    }
-    keyHit (args, util) {
-        return util.ioQuery('keyboard', 'getKeyIsHit', [args.KEY_OPTION]);
-    }
-    mouseScrolling (args, util) {
-        const delta = util.ioQuery('mouseWheel', 'getScrollDelta');
-        const option = args.SCROLL_OPTION;
-        switch (option) {
-            case "up":
-                return delta < 0;
-            case "down":
-                return delta > 0;
-            default:
-                return false;
-        }
-    }
-
-    isCharecterUppercase (args) {
-        return (/[A-Z]/g).test(args.text);
-    }
-
-    getDirectionToFrom (args, util) {
-        const dx = args.x2 - args.x1;
-        const dy = args.y2 - args.y1;
-        return util.runtime.runtimeOptions.disableDirectionClamping ?
-            90 - MathUtil.radToDeg(Math.atan2(dy, dx)) :
-            MathUtil.wrapClamp(90 - MathUtil.radToDeg(Math.atan2(dy, dx)), -179, 180);
-    }
-
-    getDistanceToFrom (args) {
-        const dx = args.x2 - args.x1;
-        const dy = args.y2 - args.y1;
-        return Math.sqrt((dx * dx) + (dy * dy));
-    }
-
-    getspritewithattrib (args, util) {
-        // strip out usless data
-        const sprites = util.runtime.targets.map(x => ({
-            id: x.id,
-            name: x.sprite ? x.sprite.name : "Unknown",
-            variables: Object.values(x.variables).reduce((obj, value) => {
-                if (!value.name) return obj;
-                obj[value.name] = String(value.value);
-                return obj;
-            }, {})
-        }));
-        // get the target with variable x set to y
-        let res = "No sprites found";
-        for (
-            // define the index and the sprite
-            let idx = 1, sprite = sprites[0];
-            // standard for loop thing
-            idx < sprites.length;
-            // set sprite to a new item
-            sprite = sprites[idx++]
-        ) {
-            if (sprite.variables[args.var] === args.val) {
-                res = `{"id": "${sprite.id}", "name": "${sprite.name}"}`;
-                break;
-            }
-        }
-
-        return res;
-    }
-    thing_is_number (args) {
-        // i hate js
-        // i also hate regex
-        // so im gonna do this the lazy way
-        // no. String(Number(value)) === value does infact do the job X)
-        // also what was originaly here was inificiant as hell
-
-        // jg: why dont you literally just do what "is text" did but the opposite
-        // except also account for numbers that end with . (that aint a number)
-        if (Cast.toString(args.TEXT1).trim().endsWith(".")) {
-            return false;
-        }
-        return !this.thing_is_text(args);
-    }
-    thing_is_text (args) {
-        // WHY IS NAN NOT EQUAL TO ITSELF
-        // HOW IS NAN A NUMBER
-        // because nan is how numbers say the value put into me is not a number
-        return isNaN(Number(args.TEXT1));
-    }
-
-    thing_has_number(args) {
-        return /\d/.test(Cast.toString(args.TEXT1));
-    }
-
-    mobile () {
-        return typeof window !== 'undefined' && 'ontouchstart' in window;
-    }
-
-    regextest (args) {
-        if (!validateRegex(args.reg, args.regrule)) return false;
-        const regex = new RegExp(args.reg, args.regrule);
-        return regex.test(args.text);
     }
 
     getMonitored () {
@@ -297,27 +84,14 @@ class Scratch3SensingBlocks {
             sensing_mousedown: {
                 getId: () => 'mousedown'
             },
-            sensing_mouseclicked: {
-                getId: () => 'mouseclicked'
-            },
             sensing_mousex: {
                 getId: () => 'mousex'
             },
             sensing_mousey: {
                 getId: () => 'mousey'
             },
-            sensing_getclipboard: {
-                getId: () => 'getclipboard'
-            },
-            sensing_getdragmode: {
-                isSpriteSpecific: true,
-                getId: targetId => `${targetId}_getdragmode`
-            },
             sensing_loudness: {
                 getId: () => 'loudness'
-            },
-            sensing_loud: {
-                getId: () => 'loud'
             },
             sensing_timer: {
                 getId: () => 'timer'
@@ -330,10 +104,7 @@ class Scratch3SensingBlocks {
                 // importing multiple monitors from the same opcode from sb2 files,
                 // something that is not currently supported in scratch 3.
                 getId: (_, fields) => getMonitorIdForBlockWithArgs('current', fields) // _${param}`
-            },
-            sensing_loggedin: {
-                getId: () => 'loggedin'
-            },
+            }
         };
     }
 
@@ -409,62 +180,8 @@ class Scratch3SensingBlocks {
         return this._answer;
     }
 
-    objectTouchingObject (args, util) {
-        const object1 = (args.FULLTOUCHINGOBJECTMENU) === "_myself_" ? util.target.getName() : args.FULLTOUCHINGOBJECTMENU;
-        const object2 = args.SPRITETOUCHINGOBJECTMENU;
-        if (object2 === "_myself_") {
-            return util.target.isTouchingObject(object1);
-        }
-        const target = this.runtime.getSpriteTargetByName(object2);
-        if (!target) return false;
-        return target.isTouchingObject(object1);
-    }
-    objectTouchingCloneOfSprite (args, util) {
-        const object1 = args.FULLTOUCHINGOBJECTMENU;
-        let object2 = args.SPRITETOUCHINGOBJECTMENU;
-        if (object2 === "_myself_") {
-            object2 = util.target.getName();
-        }
-        if (object1 === "_myself_") {
-            return util.target.isTouchingObject(object2, true);
-        }
-
-        const target = this.runtime.getSpriteTargetByName(object2);
-        if (!target) return false;
-        if (object1 === "_mouse_") {
-            if (!this.runtime.ioDevices.mouse) return false;
-            const mouseX = this.runtime.ioDevices.mouse.getClientX();
-            const mouseY = this.runtime.ioDevices.mouse.getClientY();
-            const clones = target.sprite.clones.filter(clone => !clone.isOriginal && clone.isTouchingPoint(mouseX, mouseY));
-            return clones.length > 0;
-        } else if (object1 === '_edge_') {
-            const clones = target.sprite.clones.filter(clone => !clone.isOriginal && clone.isTouchingEdge());
-            return clones.length > 0;
-        }
-
-        const originalSprite = this.runtime.getSpriteTargetByName(object1);
-        if (!originalSprite) return false;
-        return originalSprite.isTouchingObject(object2, true);
-    }
-
     touchingObject (args, util) {
         return util.target.isTouchingObject(args.TOUCHINGOBJECTMENU);
-    }
-
-    getXYOfTouchingSprite (args, util) {
-        const object = args.SPRITE;
-        if (object === '_mouse_') {
-            // we can just return mouse pos
-            // if mouse is touching us, the mouse size is practically 1x1 anyways
-            const x = util.ioQuery('mouse', 'getScratchX');
-            const y = util.ioQuery('mouse', 'getScratchY');
-            if (args.XY === 'y') return y;
-            return x;
-        }
-        const point = util.target.spriteTouchingPoint(object);
-        if (!point) return '';
-        if (args.XY === 'y') return point[1];
-        return point[0];
     }
 
     touchingColor (args, util) {
@@ -525,24 +242,9 @@ class Scratch3SensingBlocks {
         return util.ioQuery('mouse', 'getIsDown');
     }
 
-    getFingerX (args, util) {
-        return util.ioQuery('touch', 'getScratchX', [Cast.toNumber(args.FINGER_OPTION) - 1]);
-    }
-
-    getFingerY (args, util) {
-        return util.ioQuery('touch', 'getScratchY', [Cast.toNumber(args.FINGER_OPTION) - 1]);
-    }
-
-    fingerDown (args, util) {
-        return util.ioQuery('touch', 'getIsDown', [Cast.toNumber(args.FINGER_OPTION) - 1]);
-    }
-
-    fingerTapped (args, util) {
-        return util.ioQuery('touch', 'getIsTapped', [Cast.toNumber(args.FINGER_OPTION) - 1]);
-    }
-
     current (args) {
         const menuOption = Cast.toString(args.CURRENTMENU).toLowerCase();
+        if (menuOption === 'refreshtime') return (this.runtime.screenRefreshTime / 1000);
         const date = new Date();
         switch (menuOption) {
         case 'year': return date.getFullYear();
@@ -552,7 +254,6 @@ class Scratch3SensingBlocks {
         case 'hour': return date.getHours();
         case 'minute': return date.getMinutes();
         case 'second': return date.getSeconds();
-        case 'timestamp': return Date.now();
         }
         return 0;
     }
@@ -583,19 +284,11 @@ class Scratch3SensingBlocks {
 
         this._cachedLoudnessTimestamp = this._timer.time();
         this._cachedLoudness = this.runtime.audioEngine.getLoudness();
-        this.pushLoudness(this._cachedLoudness);
         return this._cachedLoudness;
     }
 
     isLoud () {
-      this.pushLoudness();
-      let sum = this._loudnessList.reduce((accumulator, currentValue) => accumulator + currentValue, 0);
-      sum /= this._loudnessList.length;
-      return this.getLoudness() > sum + 15;
-    }
-    pushLoudness (value) {
-      if (this._loudnessList.length >= 30) this._loudnessList.shift(); // remove first item
-      this._loudnessList.push(value ?? this.getLoudness());
+        return this.getLoudness() > 10;
     }
 
     getAttributeOf (args) {
@@ -632,7 +325,6 @@ class Scratch3SensingBlocks {
             case 'costume #': return attrTarget.currentCostume + 1;
             case 'costume name':
                 return attrTarget.getCostumes()[attrTarget.currentCostume].name;
-            case 'layer': return attrTarget.getLayerOrder();
             case 'size': return attrTarget.size;
             case 'volume': return attrTarget.volume;
             }
@@ -651,10 +343,6 @@ class Scratch3SensingBlocks {
 
     getUsername (args, util) {
         return util.ioQuery('userData', 'getUsername');
-    }
-
-    getLoggedIn(args, util) {
-        return util.ioQuery('userData', 'getLoggedIn');
     }
 }
 

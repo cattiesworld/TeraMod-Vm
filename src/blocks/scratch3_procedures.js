@@ -1,6 +1,5 @@
-const Cast = require('../util/cast');
 class Scratch3ProcedureBlocks {
-    constructor(runtime) {
+    constructor (runtime) {
         /**
          * The runtime instantiating this block package.
          * @type {Runtime}
@@ -12,82 +11,102 @@ class Scratch3ProcedureBlocks {
      * Retrieve the block primitives implemented by this package.
      * @return {object.<string, Function>} Mapping of opcode to Function.
      */
-    getPrimitives() {
+    getPrimitives () {
         return {
             procedures_definition: this.definition,
             procedures_call: this.call,
-            procedures_set: this.set,
+            procedures_return: this.return,
             argument_reporter_string_number: this.argumentReporterStringNumber,
-            argument_reporter_boolean: this.argumentReporterBoolean,
-            argument_reporter_command: this.argumentReporterCommand
+            argument_reporter_boolean: this.argumentReporterBoolean
         };
     }
 
-    definition() {
+    definition () {
         // No-op: execute the blocks.
     }
 
     call (args, util) {
-        if (!util.stackFrame.executed) {
-            const procedureCode = args.mutation.proccode;
-            const paramNamesIdsAndDefaults = util.getProcedureParamNamesIdsAndDefaults(procedureCode);
+        const stackFrame = util.stackFrame;
+        const isReporter = !!args.mutation.return;
 
-            // If null, procedure could not be found, which can happen if custom
-            // block is dragged between sprites without the definition.
-            // Match Scratch 2.0 behavior and noop.
-            if (paramNamesIdsAndDefaults === null) {
-                return;
+        if (stackFrame.executed) {
+            if (isReporter) {
+                const returnValue = stackFrame.returnValue;
+                // This stackframe will be reused for other reporters in this block, so clean it up for them.
+                // Can't use reset() because that will reset too much.
+                const threadStackFrame = util.thread.peekStackFrame();
+                threadStackFrame.params = null;
+                delete stackFrame.returnValue;
+                delete stackFrame.executed;
+                return returnValue;
             }
+            return;
+        }
 
-            const [paramNames, paramIds, paramDefaults] = paramNamesIdsAndDefaults;
+        const procedureCode = args.mutation.proccode;
+        const paramNamesIdsAndDefaults = util.getProcedureParamNamesIdsAndDefaults(procedureCode);
 
-            // Initialize params for the current stackFrame to {}, even if the procedure does
-            // not take any arguments. This is so that `getParam` down the line does not look
-            // at earlier stack frames for the values of a given parameter (#1729)
-            util.initParams();
-            for (let i = 0; i < paramIds.length; i++) {
-                if (args.hasOwnProperty(paramIds[i])) {
-                    util.pushParam(paramNames[i], args[paramIds[i]]);
-                } else {
-                    util.pushParam(paramNames[i], paramDefaults[i]);
-                }
+        // If null, procedure could not be found, which can happen if custom
+        // block is dragged between sprites without the definition.
+        // Match Scratch 2.0 behavior and noop.
+        if (paramNamesIdsAndDefaults === null) {
+            if (isReporter) {
+                return '';
             }
+            return;
+        }
 
-            const addonBlock = util.runtime.getAddonBlock(procedureCode);
-            if (addonBlock) {
-                const result = addonBlock.callback(util.thread.getAllparams(), util);
-                if (util.thread.status === 1 /* STATUS_PROMISE_WAIT */) {
-                    // If the addon block is using STATUS_PROMISE_WAIT to force us to sleep,
-                    // make sure to not re-run this block when we resume.
-                    util.stackFrame.executed = true;
-                }
-                return result;
+        const [paramNames, paramIds, paramDefaults] = paramNamesIdsAndDefaults;
+
+        // Initialize params for the current stackFrame to {}, even if the procedure does
+        // not take any arguments. This is so that `getParam` down the line does not look
+        // at earlier stack frames for the values of a given parameter (#1729)
+        util.initParams();
+        for (let i = 0; i < paramIds.length; i++) {
+            if (Object.prototype.hasOwnProperty.call(args, paramIds[i])) {
+                util.pushParam(paramNames[i], args[paramIds[i]]);
+            } else {
+                util.pushParam(paramNames[i], paramDefaults[i]);
             }
+        }
 
-            util.stackFrame.executed = true;
+        const addonBlock = util.runtime.getAddonBlock(procedureCode);
+        if (addonBlock) {
+            const result = addonBlock.callback(util.thread.getAllparams(), util);
+            if (util.thread.status === 1 /* STATUS_PROMISE_WAIT */) {
+                // If the addon block is using STATUS_PROMISE_WAIT to force us to sleep,
+                // make sure to not re-run this block when we resume.
+                stackFrame.executed = true;
+            }
+            return result;
+        }
 
-            util.startProcedure(procedureCode);
+        stackFrame.executed = true;
+
+        if (isReporter) {
+            util.thread.peekStackFrame().waitingReporter = true;
+            // Default return value
+            stackFrame.returnValue = '';
+        }
+
+        util.startProcedure(procedureCode);
+    }
+
+    return (args, util) {
+        util.stopThisScript();
+        // If used outside of a custom block, there may be no stackframe.
+        if (util.thread.peekStackFrame()) {
+            util.stackFrame.returnValue = args.VALUE;
         }
     }
 
-    set(args, util) {
-      const contain = util.thread.blockContainer;
-      const block = contain.getBlock(util.thread.isCompiled ? util.thread.peekStack() : util.thread.peekStackFrame().op.id);
-      if (!block) return;
-      const thread = util.thread;
-      const param = contain.getBlock(block.inputs.PARAM?.block);
-      if (param) {
-        try {
-          const curParams = thread.stackFrames[0].params;
-          if (curParams !== null) thread.stackFrames[0].params[param.fields.VALUE.value] = args.VALUE;
-          else thread.stackFrames[0].params = { [param.fields.VALUE.value]: args.VALUE }
-        } catch { /* shouldn't happen */ }
-      }
-    }
-
-    argumentReporterStringNumber(args, util) {
+    argumentReporterStringNumber (args, util) {
         const value = util.getParam(args.VALUE);
         if (value === null) {
+            // tw: support legacy block
+            if (String(args.VALUE).toLowerCase() === 'last key pressed') {
+                return util.ioQuery('keyboard', 'getLastKeyPressed');
+            }
             // When the parameter is not found in the most recent procedure
             // call, the default is always 0.
             return 0;
@@ -95,29 +114,22 @@ class Scratch3ProcedureBlocks {
         return value;
     }
 
-    argumentReporterBoolean(args, util) {
+    argumentReporterBoolean (args, util) {
         const value = util.getParam(args.VALUE);
         if (value === null) {
+            // tw: implement is compiled? and is turbowarp?
+            const lowercaseValue = String(args.VALUE).toLowerCase();
+            if (util.target.runtime.compilerOptions.enabled && lowercaseValue === 'is compiled?') {
+                return true;
+            }
+            if (lowercaseValue === 'is turbowarp?') {
+                return true;
+            }
             // When the parameter is not found in the most recent procedure
             // call, the default is always 0.
             return 0;
         }
         return value;
-    }
-
-    argumentReporterCommand(args, util) {
-        const branchInfo = util.getParam(args.VALUE) || {};
-        if (branchInfo.entry === null) return;
-        const [branchId, target] = util.getBranchAndTarget(
-            branchInfo.callerId,
-            branchInfo.entry
-        ) || [];
-        if (branchId) {
-            // Push branch ID to the thread's stack.
-            util.thread.pushStack(branchId, target);
-        } else {
-            util.thread.pushStack(null);
-        }
     }
 }
 

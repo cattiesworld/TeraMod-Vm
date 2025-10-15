@@ -2,11 +2,10 @@ let _TextEncoder;
 if (typeof TextEncoder === 'undefined') {
     _TextEncoder = require('text-encoding').TextEncoder;
 } else {
-    /* global TextEncoder */
     _TextEncoder = TextEncoder;
 }
 const EventEmitter = require('events');
-const JSZip = require('jszip');
+const JSZip = require('@turbowarp/jszip');
 
 const Buffer = require('buffer').Buffer;
 const centralDispatch = require('./dispatch/central-dispatch');
@@ -14,14 +13,10 @@ const ExtensionManager = require('./extension-support/extension-manager');
 const log = require('./util/log');
 const MathUtil = require('./util/math-util');
 const Runtime = require('./engine/runtime');
-const StringUtil = require('./util/string-util');
 const RenderedTarget = require('./sprites/rendered-target');
-const StageLayering = require('./engine/stage-layering');
 const Sprite = require('./sprites/sprite');
-const Blocks = require('./engine/blocks');
-const Comment = require('./engine/comment.js');
+const StringUtil = require('./util/string-util');
 const formatMessage = require('format-message');
-const ExtensionStorage = require('./util/deprecated-extension-storage.js');
 
 const Variable = require('./engine/variable');
 const newBlockIds = require('./util/new-block-ids');
@@ -34,12 +29,6 @@ const {exportCostume} = require('./serialization/tw-costume-import-export');
 const Base64Util = require('./util/base64-util');
 
 const RESERVED_NAMES = ['_mouse_', '_stage_', '_edge_', '_myself_', '_random_'];
-const PM_LIBRARY_API = "https://library.penguinmod.com/";
-
-const IRGenerator = require('./compiler/irgen');
-const JSGenerator = require('./compiler/jsgen');
-const jsexecute = require('./compiler/jsexecute');
-const { SyntheticModule } = require('vm');
 
 const CORE_EXTENSIONS = [
     // 'motion',
@@ -62,7 +51,6 @@ const createRuntimeService = runtime => {
     const service = {};
     service._refreshExtensionPrimitives = runtime._refreshExtensionPrimitives.bind(runtime);
     service._registerExtensionPrimitives = runtime._registerExtensionPrimitives.bind(runtime);
-    service._removeExtensionPrimitive = runtime._removeExtensionPrimitive.bind(runtime);
     return service;
 };
 
@@ -124,9 +112,6 @@ class VirtualMachine extends EventEmitter {
         this.runtime.on(Runtime.VISUAL_REPORT, visualReport => {
             this.emit(Runtime.VISUAL_REPORT, visualReport);
         });
-        this.runtime.on(Runtime.BLOCK_STACK_ERROR, visualReport => {
-            this.emit(Runtime.BLOCK_STACK_ERROR, visualReport);
-        });
         this.runtime.on(Runtime.TARGETS_UPDATE, emitProjectChanged => {
             this.emitTargetsUpdate(emitProjectChanged);
         });
@@ -141,9 +126,6 @@ class VirtualMachine extends EventEmitter {
         });
         this.runtime.on(Runtime.EXTENSION_ADDED, categoryInfo => {
             this.emit(Runtime.EXTENSION_ADDED, categoryInfo);
-        });
-        this.runtime.on(Runtime.EXTENSION_REMOVED, () => {
-            this.emit(Runtime.EXTENSION_REMOVED);
         });
         this.runtime.on(Runtime.EXTENSION_FIELD_ADDED, (fieldName, fieldImplementation) => {
             this.emit(Runtime.EXTENSION_FIELD_ADDED, fieldName, fieldImplementation);
@@ -184,12 +166,6 @@ class VirtualMachine extends EventEmitter {
         this.runtime.on(Runtime.RUNTIME_STARTED, () => {
             this.emit(Runtime.RUNTIME_STARTED);
         });
-        this.runtime.on(Runtime.RUNTIME_PAUSED, () => {
-            this.emit(Runtime.RUNTIME_PAUSED);
-        });
-        this.runtime.on(Runtime.RUNTIME_UNPAUSED, () => {
-            this.emit(Runtime.RUNTIME_UNPAUSED);
-        });
         this.runtime.on(Runtime.RUNTIME_STOPPED, () => {
             this.emit(Runtime.RUNTIME_STOPPED);
         });
@@ -208,17 +184,14 @@ class VirtualMachine extends EventEmitter {
         this.runtime.on(Runtime.INTERPOLATION_CHANGED, framerate => {
             this.emit(Runtime.INTERPOLATION_CHANGED, framerate);
         });
-        this.runtime.on(Runtime.BEFORE_INTERPOLATE, target => {
-            this.emit(Runtime.BEFORE_INTERPOLATE, target);
-        });
-        this.runtime.on(Runtime.AFTER_INTERPOLATE, target => {
-            this.emit(Runtime.AFTER_INTERPOLATE, target);
-        });
         this.runtime.on(Runtime.STAGE_SIZE_CHANGED, (width, height) => {
             this.emit(Runtime.STAGE_SIZE_CHANGED, width, height);
         });
         this.runtime.on(Runtime.COMPILE_ERROR, (target, error) => {
             this.emit(Runtime.COMPILE_ERROR, target, error);
+        });
+        this.runtime.on(Runtime.ASSET_PROGRESS, (finished, total) => {
+            this.emit(Runtime.ASSET_PROGRESS, finished, total);
         });
         this.runtime.on(Runtime.TURBO_MODE_OFF, () => {
             this.emit(Runtime.TURBO_MODE_OFF);
@@ -230,7 +203,6 @@ class VirtualMachine extends EventEmitter {
         this.extensionManager = new ExtensionManager(this);
         this.securityManager = this.extensionManager.securityManager;
         this.runtime.extensionManager = this.extensionManager;
-        this.runtime.vm = this;
 
         // Load core extensions
         for (const id of CORE_EXTENSIONS) {
@@ -241,9 +213,6 @@ class VirtualMachine extends EventEmitter {
         this.flyoutBlockListener = this.flyoutBlockListener.bind(this);
         this.monitorBlockListener = this.monitorBlockListener.bind(this);
         this.variableListener = this.variableListener.bind(this);
-        this.addListener('workspaceUpdate', () => {
-            this.extensionManager.refreshDynamicCategorys();
-        });
 
         /**
          * Export some internal classes for extensions.
@@ -252,44 +221,18 @@ class VirtualMachine extends EventEmitter {
             Sprite,
             RenderedTarget,
             JSZip,
-            JSGenerator,
-            IRGenerator,
-            jsexecute,
-            loadCostume,
-            loadSound,
-            Blocks,
-            Comment,
-            StageLayering,
-            Variable,
-            Thread: require('./engine/thread.js'),
-            execute: require('./engine/execute.js'),
-            centralDispatch
-        };
 
-        /**
-         * For comptatibility with TurboWarp's
-         * i_will_not_ask_for_help_when_these_break export.
-         */
-        this.exports.i_will_not_ask_for_help_when_these_break = () => {
-            console.info(
-                'Note on i_will_not_ask_for_help_when_these_break: this function is ' +
-                'only included for compatibility with TurboWarp, and you should avoid ' +
-                'using it when possible.\n' +
-                'All indexes are able to be accessed from the regular vm.exports ' +
-                'property. Below is a map of all elements here to their vm.exports ' +
-                'counterpart:\n' +
-                'IRGenerator -> IRGenerator\nJSGenerator -> JSGenerator\nThread -> Thread\n' +
-                'execute -> execute\n' +
-                'ScriptTreeGenerator -> IRGenerator.exports.ScriptTreeGenerator'
-            );
-            return {
-                IRGenerator,
-                JSGenerator,
-                ScriptTreeGenerator: IRGenerator.exports.ScriptTreeGenerator,
-                Thread: this.exports.Thread,
-                execute: this.exports.execute
+            i_will_not_ask_for_help_when_these_break: () => {
+                console.warn('You are using unsupported APIs. WHEN your code breaks, do not expect help.');
+                return ({
+                    JSGenerator: require('./compiler/jsgen.js'),
+                    IRGenerator: require('./compiler/irgen.js').IRGenerator,
+                    ScriptTreeGenerator: require('./compiler/irgen.js').ScriptTreeGenerator,
+                    Thread: require('./engine/thread.js'),
+                    execute: require('./engine/execute.js')
+                });
             }
-        }
+        };
     }
 
     /**
@@ -300,11 +243,18 @@ class VirtualMachine extends EventEmitter {
     }
 
     /**
-     * tw: Stop running the VM
-     * Note: This only stops the loop. It will not stop any threads the next time the VM starts
+     * @deprecated Used by old versions of TurboWarp. Superceded by upstream's quit()
      */
     stop () {
-        this.runtime.stop();
+        this.quit();
+    }
+
+    /**
+     * Quit the VM, clearing any handles which might keep the process alive.
+     * Do not use the runtime after calling this method. This method is meant for test shutdown.
+     */
+    quit () {
+        this.runtime.quit();
     }
 
     /**
@@ -383,6 +333,10 @@ class VirtualMachine extends EventEmitter {
     enableDebug () {
         this.runtime.enableDebug();
         return 'enabled debug mode';
+    }
+
+    handleExtensionButtonPress (buttonData) {
+        this.runtime.handleExtensionButtonPress(buttonData);
     }
 
     /**
@@ -472,67 +426,67 @@ class VirtualMachine extends EventEmitter {
         return this.runtime.getPeripheralIsConnected(extensionId);
     }
 
-    isSB2(json) {
-        return Array.isArray(json.children) && !Array.isArray(json.targets);
-    }
     /**
      * Load a Scratch project from a .sb, .sb2, .sb3 or json string.
      * @param {string | object} input A json string, object, or ArrayBuffer representing the project to load.
      * @return {!Promise} Promise that resolves after targets are installed.
      */
     loadProject (input) {
-        return new Promise(async (resolve, reject) => {
-            try {
-                const arr = new Uint8Array(input);
-                const tag = [...arr.slice(0, 7)]
-                    .map(char => String.fromCharCode(char))
-                    .join('');
-                if (tag === 'Scratch') {
-                    const { SB1File } = require('scratch-sb1-converter');
+        if (typeof input === 'object' && !(input instanceof ArrayBuffer) &&
+          !ArrayBuffer.isView(input)) {
+            // If the input is an object and not any ArrayBuffer
+            // or an ArrayBuffer view (this includes all typed arrays and DataViews)
+            // turn the object into a JSON string, because we suspect
+            // this is a project.json as an object
+            // validate expects a string or buffer as input
+            // TODO not sure if we need to check that it also isn't a data view
+            input = JSON.stringify(input);
+        }
+
+        const validationPromise = new Promise((resolve, reject) => {
+            const validate = require('scratch-parser');
+            // The second argument of false below indicates to the validator that the
+            // input should be parsed/validated as an entire project (and not a single sprite)
+            validate(input, false, (error, res) => {
+                if (error) {
+                    return reject(error);
+                }
+                resolve(res);
+            });
+        })
+            .catch(error => {
+                const {SB1File, ValidationError} = require('scratch-sb1-converter');
+
+                try {
                     const sb1 = new SB1File(input);
                     const json = sb1.json;
                     json.projectVersion = 2;
-                    return resolve([json, sb1.zip]);
-                }
-
-                if (typeof input === 'string') input = JSON.parse(input);
-                // generic objects return [object Object] on stringify
-                if (input.toString() === '[object Object]') {
-                    input.projectVersion = this.isSB2(input) ? 2 : 3;
-                    return resolve([input, null]);
-                }
-                if (tag.slice(0, 2) !== 'PK') {
-                    // if it isnt a zip, maby its the project.json in ArrayBuffer form
-                    const decoder = new TextDecoder('UTF-8');
-                    input = decoder.decode(input);
-
-                    if (typeof input === 'string') input = JSON.parse(input);
-                    // generic objects return [object Object] on stringify
-                    if (input.toString() === '[object Object]') {
-                        input.projectVersion = this.isSB2(input) ? 2 : 3;
-                        return resolve([input, null]);
+                    return Promise.resolve([json, sb1.zip]);
+                } catch (sb1Error) {
+                    if (
+                        sb1Error instanceof ValidationError ||
+                        `${sb1Error}`.includes('Non-ascii character in FixedAsciiString')
+                    ) {
+                        // The input does not validate as a Scratch 1 file.
+                    } else {
+                        // The project appears to be a Scratch 1 file but it
+                        // could not be successfully translated into a Scratch 2
+                        // project.
+                        return Promise.reject(sb1Error);
                     }
                 }
+                // Throw original error since the input does not appear to be
+                // an SB1File.
+                return Promise.reject(error);
+            });
 
-                const zip = await JSZip.loadAsync(input);
-                const proj = zip.file('project.json');
-                if (!proj) return reject('No project.json file inside the given project');
-                const json = JSON.parse(await proj.async('string'));
-                json.projectVersion = this.isSB2(json) ? 2 : 3;
-
-                this._projectZip = zip
-                return resolve([json, zip]);
-            } catch (err) {
-                reject(err.toString());
-            }
-        })
+        return validationPromise
             .then(validatedInput => this.deserializeProject(validatedInput[0], validatedInput[1]))
-            .then(() => this.runtime.emitProjectLoaded())
+            .then(() => this.runtime.handleProjectLoaded())
             .catch(error => {
-                console.error(error);
                 // Intentionally rejecting here (want errors to be handled by caller)
-                if (error.hasOwnProperty('validationError')) {
-                    return Promise.reject(JSON.stringify(error, null, 4));
+                if (Object.prototype.hasOwnProperty.call(error, 'validationError')) {
+                    return Promise.reject(JSON.stringify(error));
                 }
                 return Promise.reject(error);
             });
@@ -559,8 +513,6 @@ class VirtualMachine extends EventEmitter {
         });
     }
 
-    _projectZip = new JSZip();
-
     /**
      * @returns {JSZip} JSZip zip object representing the sb3.
      */
@@ -575,38 +527,15 @@ class VirtualMachine extends EventEmitter {
         zip.file('project.json', projectJson);
         this._addFileDescsToZip(this.serializeAssets(), zip);
 
-        // extra assets implementation
-        if (this._projectZip) {
-            try {
-                zip.files = {...zip.files, ...Object.fromEntries(Object.entries(this._projectZip.files).filter(v => v[0].startsWith("extraAssets/")))}
-            } catch (e) {
-                console.warn("unable to get extra assets", e)
-            }
-        }
-
         // Use a fixed modification date for the files in the zip instead of letting JSZip use the
         // current time to avoid a very small metadata leak and make zipping deterministic. The magic
         // number is from the first TurboWarp/scratch-vm commit after forking
+        // (4a93dab4fa3704ab7a1374b9794026b3330f3433).
         const date = new Date(1591657163000);
         for (const file of Object.values(zip.files)) {
             file.date = date;
         }
 
-        // Tell JSZip to only compress file formats where there will be a significant gain.
-        const COMPRESSABLE_FORMATS = [
-            '.json',
-            '.svg',
-            '.wav',
-            '.ttf',
-            '.otf'
-        ];
-        for (const file of Object.values(zip.files)) {
-            if (COMPRESSABLE_FORMATS.some(ext => file.name.endsWith(ext))) {
-                file.options.compression = 'DEFLATE';
-            } else {
-                file.options.compression = 'STORE';
-            }
-        }
         return zip;
     }
 
@@ -674,7 +603,7 @@ class VirtualMachine extends EventEmitter {
      * @param {string} targetId Optional ID of target to export
      * @returns {Array<{fileName: string; fileContent: Uint8Array;}} list of file descs
      */
-    serializeAssets(targetId) {
+    serializeAssets (targetId) {
         const costumeDescs = serializeCostumes(this.runtime, targetId);
         const soundDescs = serializeSounds(this.runtime, targetId);
         const fontDescs = this.runtime.fontManager.serializeAssets().map(asset => ({
@@ -689,6 +618,7 @@ class VirtualMachine extends EventEmitter {
     }
 
     _addFileDescsToZip (fileDescs, zip) {
+        // TODO: sort files, smallest first
         for (let i = 0; i < fileDescs.length; i++) {
             const currFileDesc = fileDescs[i];
             zip.file(currFileDesc.fileName, currFileDesc.fileContent);
@@ -743,7 +673,7 @@ class VirtualMachine extends EventEmitter {
      * @returns {Promise} Promise that resolves after the project has loaded
      */
     fromJSON (json) {
-        log.warning('fromJSON is now just a wrapper around loadProject, please use that function instead.');
+        log.warn('fromJSON is now just a wrapper around loadProject, please use that function instead.');
         return this.loadProject(json);
     }
 
@@ -769,9 +699,10 @@ class VirtualMachine extends EventEmitter {
             }
             if (projectVersion === 3) {
                 const sb3 = require('./serialization/sb3');
-                // eslint-disable-next-line no-invalid-this
-                return sb3.deserialize(projectJSON, runtime, zip, false, this);
+                return sb3.deserialize(projectJSON, runtime, zip);
             }
+            // TODO: reject with an Error (possible breaking API change!)
+            // eslint-disable-next-line prefer-promise-reject-errors
             return Promise.reject('Unable to verify Scratch Project version.');
         };
         return deserializePromise()
@@ -801,24 +732,22 @@ class VirtualMachine extends EventEmitter {
         const defaultExtensionURLs = require('./extension-support/tw-default-extension-urls');
         const extensionPromises = [];
         for (const extensionID of extensionIDs) {
-            let url = extensionURLs.get(extensionID);
-            if (!url && Object.prototype.hasOwnProperty.call(defaultExtensionURLs, extensionID)) {
-                url = defaultExtensionURLs[extensionID];
-            }
             if (this.extensionManager.isExtensionLoaded(extensionID)) {
                 // Already loaded
-            } else if (url) {
-                // extension url
+            } else if (this.extensionManager.isBuiltinExtension(extensionID)) {
+                // Builtin extension
+                this.extensionManager.loadExtensionIdSync(extensionID);
+            } else {
+                // Custom extension
+                const url = extensionURLs.get(extensionID) || defaultExtensionURLs.get(extensionID);
+                if (!url) {
+                    throw new Error(`Unknown extension: ${extensionID}`);
+                }
                 if (await this.securityManager.canLoadExtensionFromProject(url)) {
                     extensionPromises.push(this.extensionManager.loadExtensionURL(url));
                 } else {
                     throw new Error(`Permission to load extension denied: ${extensionID}`);
                 }
-            } else if (this.extensionManager.isBuiltinExtension(extensionID)) {
-                // Builtin extension
-                this.extensionManager.loadExtensionIdSync(extensionID);
-            } else {
-                throw new Error(`Unknown extension: ${extensionID}`);
             }
         }
         return Promise.all(extensionPromises);
@@ -837,51 +766,11 @@ class VirtualMachine extends EventEmitter {
         targets = targets.filter(target => !!target);
 
         return this._loadExtensions(extensions.extensionIDs, extensions.extensionURLs).then(() => {
-            const deprecated_extensionStorage = {};
-            for (const extension of extensions.extensionIDs) {
-                if (!extensions.extensionData[extension]) continue;
-                if (
-                    `ext_${extension}` in this.runtime &&
-                    typeof this.runtime[`ext_${extension}`].deserialize === 'function'
-                ) {
-                    this.runtime[`ext_${extension}`].deserialize(extensions.extensionData[extension]);
-                    continue;
-                }
-                deprecated_extensionStorage[extension] = extensions.extensionData[extension];
-            }
-            if (deprecated_extensionStorage)
-                this.runtime.extensionStorage = ExtensionStorage(deprecated_extensionStorage);
-
             targets.forEach(target => {
                 this.runtime.addTarget(target);
                 (/** @type RenderedTarget */ target).updateAllDrawableProperties();
                 // Ensure unique sprite name
                 if (target.isSprite()) this.renameSprite(target.id, target.getName());
-
-                if (!("extensionData" in target)) return;
-
-                const deprecated_extensionStorage_pertarget = {};
-
-                for (const extension of extensions.extensionIDs) {
-                    if (!(extension in target.extensionData)) continue;
-
-                    if (
-                        `ext_${extension}` in this.runtime &&
-                        typeof this.runtime[`ext_${extension}`].deserializeForTarget === 'function'
-                    ) {
-                        this.runtime[`ext_${extension}`].deserializeForTarget(
-                            target.extensionData[extension],
-                            target,
-                        );
-                        continue;
-                    }
-                    deprecated_extensionStorage_pertarget[extension] = target.extensionData[extension];
-                }
-
-                if (deprecated_extensionStorage)
-                    target.extensionStorage = ExtensionStorage(deprecated_extensionStorage_pertarget);
-
-                delete target["extensionData"]
             });
             // Sort the executable targets by layerOrder.
             // Remove layerOrder property after use.
@@ -935,7 +824,7 @@ class VirtualMachine extends EventEmitter {
         const validationPromise = new Promise((resolve, reject) => {
             const validate = require('scratch-parser');
             // The second argument of true below indicates to the parser/validator
-            //  the given input should be treated as a single sprite and not
+            // that the given input should be treated as a single sprite and not
             // an entire project
             validate(input, true, (error, res) => {
                 if (error) return reject(error);
@@ -952,14 +841,18 @@ class VirtualMachine extends EventEmitter {
                 if (projectVersion === 3) {
                     return this._addSprite3(validatedInput[0], validatedInput[1]);
                 }
+                // TODO: reject with an Error (possible breaking API change!)
+                // eslint-disable-next-line prefer-promise-reject-errors
                 return Promise.reject(`${errorPrefix} Unable to verify sprite version.`);
             })
             .then(() => this.runtime.emitProjectChanged())
             .catch(error => {
                 // Intentionally rejecting here (want errors to be handled by caller)
-                if (error.hasOwnProperty('validationError')) {
+                if (Object.prototype.hasOwnProperty.call(error, 'validationError')) {
                     return Promise.reject(JSON.stringify(error));
                 }
+                // TODO: reject with an Error (possible breaking API change!)
+                // eslint-disable-next-line prefer-promise-reject-errors
                 return Promise.reject(`${errorPrefix} ${error}`);
             });
     }
@@ -1002,44 +895,14 @@ class VirtualMachine extends EventEmitter {
      * @property {number} rotationCenterY - the Y component of the costume's origin.
      * @property {number} [bitmapResolution] - the resolution scale for a bitmap costume.
      * @param {string} optTargetId - the id of the target to add to, if not the editing target.
-     * @param {number} optVersion - if this is 2, load costume as sb2, otherwise load costume as sb3.
+     * @param {string} optVersion - if this is 2, load costume as sb2, otherwise load costume as sb3.
      * @returns {?Promise} - a promise that resolves when the costume has been added
      */
     addCostume (md5ext, costumeObject, optTargetId, optVersion) {
         const target = optTargetId ? this.runtime.getTargetById(optTargetId) :
             this.editingTarget;
         if (target) {
-            if (costumeObject.fromPenguinModLibrary === true) {
-                return new Promise((resolve, reject) => {
-                    fetch(`${PM_LIBRARY_API}files/${costumeObject.libraryId}`)
-                        .then((r) => r.arrayBuffer())
-                        .then((arrayBuffer) => {
-                            const dataFormat = costumeObject.dataFormat;
-                            const storage = this.runtime.storage;
-                            const asset = new storage.Asset(
-                                storage.AssetType[dataFormat === 'svg' ? "ImageVector" : "ImageBitmap"],
-                                null,
-                                storage.DataFormat[dataFormat.toUpperCase()],
-                                new Uint8Array(arrayBuffer),
-                                true
-                            );
-                            const newCostumeObject = {
-                                md5: asset.assetId + '.' + asset.dataFormat,
-                                asset: asset,
-                                name: costumeObject.name
-                            }
-                            loadCostume(newCostumeObject.md5, newCostumeObject, this.runtime, optVersion).then(costumeAsset => {
-                                target.addCostume(newCostumeObject);
-                                target.setCostume(
-                                    target.getCostumes().length - 1
-                                );
-                                this.runtime.emitProjectChanged();
-                                resolve(costumeAsset, newCostumeObject);
-                            })
-                        }).catch(reject);
-                });
-            }
-            return loadCostume(md5ext, costumeObject, this.runtime, optVersion).then(costumeObject => {
+            return loadCostume(md5ext, costumeObject, this.runtime, optVersion).then(() => {
                 target.addCostume(costumeObject);
                 target.setCostume(
                     target.getCostumes().length - 1
@@ -1048,6 +911,8 @@ class VirtualMachine extends EventEmitter {
             });
         }
         // If the target cannot be found by id, return a rejected promise
+        // TODO: reject with an Error (possible breaking API change!)
+        // eslint-disable-next-line prefer-promise-reject-errors
         return Promise.reject();
     }
 
@@ -1062,6 +927,8 @@ class VirtualMachine extends EventEmitter {
      * @returns {?Promise} - a promise that resolves when the costume has been added
      */
     addCostumeFromLibrary (md5ext, costumeObject) {
+        // TODO: reject with an Error (possible breaking API change!)
+        // eslint-disable-next-line prefer-promise-reject-errors
         if (!this.editingTarget) return Promise.reject();
         return this.addCostume(md5ext, costumeObject, this.editingTarget.id, 2 /* optVersion */);
     }
@@ -1126,20 +993,6 @@ class VirtualMachine extends EventEmitter {
     }
 
     /**
-     * Pause running scripts
-     */
-    pause() {
-        this.runtime.pause();
-    }
-
-    /**
-     * Unpause running scripts
-     */
-    play() {
-        this.runtime.play();
-    }
-
-    /**
      * Add a sound to the current editing target.
      * @param {!object} soundObject Object representing the costume.
      * @param {string} optTargetId - the id of the target to add to, if not the editing target.
@@ -1149,32 +1002,6 @@ class VirtualMachine extends EventEmitter {
         const target = optTargetId ? this.runtime.getTargetById(optTargetId) :
             this.editingTarget;
         if (target) {
-            if (soundObject.fromPenguinModLibrary === true) {
-                return new Promise((resolve, reject) => {
-                    fetch(`${PM_LIBRARY_API}files/${soundObject.libraryId}`)
-                        .then((r) => r.arrayBuffer())
-                        .then((arrayBuffer) => {
-                            const storage = this.runtime.storage;
-                            const asset = new storage.Asset(
-                                storage.AssetType.Sound,
-                                null,
-                                storage.DataFormat.MP3,
-                                new Uint8Array(arrayBuffer),
-                                true
-                            );
-                            const newSoundObject = {
-                                md5: asset.assetId + '.' + asset.dataFormat,
-                                asset: asset,
-                                name: soundObject.name
-                            }
-                            loadSound(newSoundObject, this.runtime, target.sprite.soundBank).then(soundAsset => {
-                                target.addSound(newSoundObject);
-                                this.emitTargetsUpdate();
-                                resolve(soundAsset, newSoundObject);
-                            });
-                        }).catch(reject);
-                });
-            }
             return loadSound(soundObject, this.runtime, target.sprite.soundBank).then(() => {
                 target.addSound(soundObject);
                 this.emitTargetsUpdate();
@@ -1200,7 +1027,7 @@ class VirtualMachine extends EventEmitter {
      * @return {AudioBuffer} the sound's audio buffer.
      */
     getSoundBuffer (soundIndex) {
-        const id = this.editingTarget.sprite.sounds[soundIndex]?.soundId;
+        const id = this.editingTarget.sprite.sounds[soundIndex].soundId;
         if (id && this.runtime && this.runtime.audioEngine) {
             return this.editingTarget.sprite.soundBank.getSoundPlayer(id).buffer;
         }
@@ -1292,21 +1119,19 @@ class VirtualMachine extends EventEmitter {
     /**
      * TW: Get the raw binary data to use when exporting a costume to the user's local file system.
      * @param {Costume} costumeObject scratch-vm costume object
-     * @param {Boolean} determines wether to add assets like fonts or not
      * @returns {Uint8Array}
      */
-    getExportedCostume (costumeObject, optIncludeExtras) {
-        return exportCostume(costumeObject, optIncludeExtras);
+    getExportedCostume (costumeObject) {
+        return exportCostume(costumeObject);
     }
 
     /**
      * TW: Get a base64 string to use when exporting a costume to the user's local file system.
      * @param {Costume} costumeObject scratch-vm costume object
-     * @param {Boolean} determines wether to add assets like fonts or not
      * @returns {string} base64 string. Not a data: URI.
      */
-    getExportedCostumeBase64 (costumeObject, optIncludeExtras) {
-        const binaryData = this.getExportedCostume(costumeObject, optIncludeExtras);
+    getExportedCostumeBase64 (costumeObject) {
+        const binaryData = this.getExportedCostume(costumeObject);
         return Base64Util.uint8ArrayToBase64(binaryData);
     }
 
@@ -1432,36 +1257,7 @@ class VirtualMachine extends EventEmitter {
      * @property {number} [bitmapResolution] - the resolution scale for a bitmap backdrop.
      * @returns {?Promise} - a promise that resolves when the backdrop has been added
      */
-    addBackdrop(md5ext, backdropObject) {
-        if (backdropObject.fromPenguinModLibrary === true) {
-            return new Promise((resolve, reject) => {
-                fetch(`${PM_LIBRARY_API}files/${backdropObject.libraryId}`)
-                    .then((r) => r.arrayBuffer())
-                    .then((arrayBuffer) => {
-                        const dataFormat = backdropObject.dataFormat;
-                        const storage = this.runtime.storage;
-                        const asset = new storage.Asset(
-                            storage.AssetType[dataFormat === 'svg' ? "ImageVector" : "ImageBitmap"],
-                            null,
-                            storage.DataFormat[dataFormat.toUpperCase()],
-                            new Uint8Array(arrayBuffer),
-                            true
-                        );
-                        const newCostumeObject = {
-                            md5: asset.assetId + '.' + asset.dataFormat,
-                            asset: asset,
-                            name: backdropObject.name
-                        }
-                        loadCostume(newCostumeObject.md5, newCostumeObject, this.runtime).then(costumeAsset => {
-                            const stage = this.runtime.getTargetForStage();
-                            stage.addCostume(newCostumeObject);
-                            stage.setCostume(stage.getCostumes().length - 1);
-                            this.runtime.emitProjectChanged();
-                            resolve(costumeAsset, newCostumeObject);
-                        })
-                    }).catch(reject);
-            });
-        }
+    addBackdrop (md5ext, backdropObject) {
         return loadCostume(md5ext, backdropObject, this.runtime).then(() => {
             const stage = this.runtime.getTargetForStage();
             stage.addCostume(backdropObject);
@@ -1539,51 +1335,6 @@ class VirtualMachine extends EventEmitter {
                 if (clone === currentEditingTarget) {
                     const nextTargetIndex = Math.min(this.runtime.targets.length - 1, targetIndexBeforeDelete);
                     if (this.runtime.targets.length > 0){
-                        this.setEditingTarget(this.runtime.targets[nextTargetIndex].id);
-                    } else {
-                        this.editingTarget = null;
-                    }
-                }
-            }
-            // Sprite object should be deleted by GC.
-            this.emitTargetsUpdate();
-            return restoreSprite;
-        }
-
-        throw new Error('No target with the provided id.');
-    }
-
-    /**
-     * pm: Clone of deleteSprite, used if an addon or script replaces the original deleteSprite.
-     * @param {string} targetId ID of a target whose sprite to delete.
-     * @return {Function} Returns a function to restore the sprite that was deleted
-     */
-    deleteSpriteInternal(targetId) {
-        const target = this.runtime.getTargetById(targetId);
-
-        if (target) {
-            const targetIndexBeforeDelete = this.runtime.targets.map(t => t.id).indexOf(target.id);
-            if (!target.isSprite()) {
-                throw new Error('Cannot delete non-sprite targets.');
-            }
-            const sprite = target.sprite;
-            if (!sprite) {
-                throw new Error('No sprite associated with this target.');
-            }
-            const spritePromise = this.exportSprite(targetId, 'uint8array');
-            const restoreSprite = () => spritePromise.then(spriteBuffer => this.addSprite(spriteBuffer));
-            // Remove monitors from the runtime state and remove the
-            // target-specific monitored blocks (e.g. local variables)
-            target.deleteMonitors();
-            const currentEditingTarget = this.editingTarget;
-            for (let i = 0; i < sprite.clones.length; i++) {
-                const clone = sprite.clones[i];
-                this.runtime.stopForTarget(sprite.clones[i]);
-                this.runtime.disposeTarget(sprite.clones[i]);
-                // Ensure editing target is switched if we are deleting it.
-                if (clone === currentEditingTarget) {
-                    const nextTargetIndex = Math.min(this.runtime.targets.length - 1, targetIndexBeforeDelete);
-                    if (this.runtime.targets.length > 0) {
                         this.setEditingTarget(this.runtime.targets[nextTargetIndex].id);
                     } else {
                         this.editingTarget = null;
@@ -1730,6 +1481,13 @@ class VirtualMachine extends EventEmitter {
     }
 
     /**
+     * Delete all of the flyout blocks.
+     */
+    clearFlyoutBlocks () {
+        this.runtime.flyoutBlocks.deleteAllBlocks();
+    }
+
+    /**
      * Set an editing target. An editor UI can use this function to switch
      * between editing different targets, sprites, etc.
      * After switching the editing target, the VM may emit updates
@@ -1868,7 +1626,7 @@ class VirtualMachine extends EventEmitter {
                 lazyTargetList = this.runtime.targets
                     .filter(
                         // Don't report clones.
-                        target => !target.hasOwnProperty('isOriginal') || target.isOriginal
+                        target => !Object.prototype.hasOwnProperty.call(target, 'isOriginal') || target.isOriginal
                     ).map(
                         target => target.toJSON()
                     );
@@ -1952,7 +1710,10 @@ class VirtualMachine extends EventEmitter {
      */
     getTargetIdForDrawableId (drawableId) {
         const target = this.runtime.getTargetByDrawableId(drawableId);
-        if (target && target.hasOwnProperty('id') && target.hasOwnProperty('isStage') && !target.isStage) {
+        if (target &&
+            Object.prototype.hasOwnProperty.call(target, 'id') &&
+            Object.prototype.hasOwnProperty.call(target, 'isStage') &&
+            !target.isStage) {
             return target.id;
         }
         return null;

@@ -109,13 +109,6 @@ class BlockUtility {
     }
 
     /**
-     * pm: Set the thread to the running state.
-     */
-    defaultStatus () {
-        this.thread.status = Thread.STATUS_RUNNING;
-    }
-
-    /**
      * Set the thread to yield until the next tick of the runtime.
      */
     yieldTick () {
@@ -129,20 +122,6 @@ class BlockUtility {
      */
     startBranch (branchNum, isLoop) {
         this.sequencer.stepToBranch(this.thread, branchNum, isLoop);
-    }
-
-    /**
-     * Get the branch for a particular C-shaped block, and it's target.
-     * @param {string} id ID for block to get the branch for.
-     * @param {string} branchId Which branch to select (e.g. for if-else).
-     * @return {string} ID of block in the branch.
-     */
-    getBranchAndTarget (id, branchId) {
-        const result = this.thread.blockContainer.getBranch(id, branchId);
-        if (result) {
-            return [result, this.thread.target];
-        }
-        return this.sequencer.runtime.getBranchAndTarget(id, branchId);
     }
 
     /**
@@ -253,6 +232,8 @@ class BlockUtility {
             this.sequencer.runtime.ioDevices[device] &&
             this.sequencer.runtime.ioDevices[device][func]) {
             const devObject = this.sequencer.runtime.ioDevices[device];
+            // TODO: verify correct `this` after switching from apply to spread
+            // eslint-disable-next-line prefer-spread
             return devObject[func].apply(devObject, args);
         }
     }

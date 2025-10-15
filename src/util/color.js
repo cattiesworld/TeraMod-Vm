@@ -32,7 +32,7 @@ class Color {
         if (decimal < 0) {
             decimal += 0xFFFFFF + 1;
         }
-        let hex = Math.round(Number(decimal)).toString(16);
+        let hex = Number(decimal).toString(16);
         hex = `#${'000000'.substr(0, 6 - hex.length)}${hex}`;
         return hex;
     }
@@ -58,9 +58,6 @@ class Color {
     static hexToRgb (hex) {
         if (hex.startsWith('#')) {
             hex = hex.substring(1);
-        }
-        if (hex.length === 8) {
-            hex = hex.slice(0, 6);
         }
         const parsed = parseInt(hex, 16);
         if (isNaN(parsed)) {
